@@ -42,7 +42,7 @@ export default function RegisterPage() {
     // Se confirmação de email estiver ativa, mostra aviso. Senão, redireciona.
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
-      router.push('/dashboard')
+      router.push('/')
       router.refresh()
     } else {
       setCheckEmail(true)
