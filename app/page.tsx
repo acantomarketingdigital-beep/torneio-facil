@@ -1,65 +1,66 @@
-import Image from "next/image";
+import Link from 'next/link'
 
-export default function Home() {
+export default function LandingPage() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 text-white">
+      {/* Header */}
+      <header className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">🏆</span>
+          <span className="font-bold text-xl">TorneioFácil</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="flex gap-3">
+          <Link href="/login" className="px-4 py-2 rounded-lg border border-white/30 hover:bg-white/10 transition-colors text-sm font-medium">
+            Entrar
+          </Link>
+          <Link href="/register" className="px-4 py-2 rounded-lg bg-white text-blue-700 hover:bg-blue-50 transition-colors text-sm font-medium">
+            Criar conta
+          </Link>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <main className="max-w-6xl mx-auto px-6 pt-20 pb-32 text-center">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 border border-white/20 text-sm mb-8">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          PWA – Funciona no celular sem instalar app
+        </div>
+        <h1 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
+          Crie tabelas esportivas<br />em segundos
+        </h1>
+        <p className="text-xl text-blue-100 max-w-2xl mx-auto mb-10">
+          Gere automaticamente tabelas para seus campeonatos. Todos contra todos, mata-mata, fase de grupos e mais. Classificação em tempo real.
+        </p>
+        <Link
+          href="/register"
+          className="inline-flex items-center gap-2 px-8 py-4 bg-white text-blue-700 rounded-xl font-semibold text-lg hover:bg-blue-50 transition-colors shadow-lg"
+        >
+          Começar gratuitamente →
+        </Link>
+
+        {/* Features */}
+        <div className="grid md:grid-cols-3 gap-6 mt-24 text-left">
+          {[
+            { icon: '⚡', title: 'Geração automática', desc: 'Informe os times e datas — o sistema monta toda a tabela de jogos automaticamente respeitando quadras, horários e intervalos.' },
+            { icon: '📊', title: '4 formatos suportados', desc: 'Todos contra todos, mata-mata, grupos + mata-mata ou formato personalizado onde cada time joga X partidas.' },
+            { icon: '🏅', title: 'Classificação ao vivo', desc: 'Lance os resultados e a tabela de classificação é atualizada em tempo real com critérios de desempate configuráveis.' },
+            { icon: '🔗', title: 'Página pública', desc: 'Compartilhe o link do campeonato com qualquer pessoa. Tabela, jogos e classificação acessíveis sem login.' },
+            { icon: '📱', title: 'PWA instalável', desc: 'Instale como aplicativo no celular Android ou iOS. Funciona mesmo com conexão instável.' },
+            { icon: '📄', title: 'Exportar em PDF', desc: 'Exporte a tabela de jogos e classificação em PDF para imprimir ou compartilhar.' },
+          ].map(f => (
+            <div key={f.title} className="bg-white/10 backdrop-blur border border-white/20 rounded-2xl p-6 hover:bg-white/15 transition-colors">
+              <div className="text-3xl mb-3">{f.icon}</div>
+              <h3 className="font-semibold text-lg mb-2">{f.title}</h3>
+              <p className="text-blue-100 text-sm leading-relaxed">{f.desc}</p>
+            </div>
+          ))}
         </div>
       </main>
+
+      {/* Footer */}
+      <footer className="border-t border-white/10 py-8 text-center text-sm text-blue-200">
+        <p>TorneioFácil &copy; {new Date().getFullYear()} — Sistema de Gestão de Campeonatos Esportivos</p>
+      </footer>
     </div>
-  );
+  )
 }
