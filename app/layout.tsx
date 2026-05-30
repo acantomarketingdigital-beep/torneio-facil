@@ -5,13 +5,13 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'TorneioFácil – Gerador de Tabelas Esportivas',
+  title: 'TabelaPro – Gerador de Tabelas Esportivas',
   description: 'Crie e gerencie campeonatos esportivos com geração automática de tabelas.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'TorneioFácil',
+    title: 'TabelaPro',
   },
   icons: {
     icon: '/icons/icon-192.png',

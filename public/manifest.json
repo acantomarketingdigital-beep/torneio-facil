@@ -1,7 +1,7 @@
 {
-  "name": "TorneioFácil – Tabelas Esportivas",
-  "short_name": "TorneioFácil",
-  "description": "Gerador de tabelas para campeonatos esportivos",
+  "name": "TabelaPro – Tabelas Esportivas",
+  "short_name": "TabelaPro",
+  "description": "Gerador de tabelas para campeonatos esportivos – TabelaPro",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
