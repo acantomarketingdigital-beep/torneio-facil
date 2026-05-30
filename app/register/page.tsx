@@ -14,6 +14,7 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [checkEmail, setCheckEmail] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,8 +39,14 @@ export default function RegisterPage() {
       return
     }
 
-    router.push('/dashboard')
-    router.refresh()
+    // Se confirmação de email estiver ativa, mostra aviso. Senão, redireciona.
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      router.push('/dashboard')
+      router.refresh()
+    } else {
+      setCheckEmail(true)
+    }
   }
 
   return (
@@ -55,6 +62,20 @@ export default function RegisterPage() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-8">
+          {checkEmail ? (
+            <div className="text-center space-y-4">
+              <div className="text-5xl">📧</div>
+              <h2 className="text-lg font-semibold text-gray-900">Confirme seu email</h2>
+              <p className="text-sm text-gray-500">
+                Enviamos um link de confirmação para <strong>{email}</strong>.<br />
+                Clique no link para ativar sua conta e poder entrar.
+              </p>
+              <p className="text-xs text-gray-400">Não recebeu? Verifique o spam.</p>
+              <Link href="/login" className="block text-sm text-blue-600 hover:underline font-medium">
+                Ir para o login →
+              </Link>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Nome completo</label>
@@ -125,12 +146,15 @@ export default function RegisterPage() {
             </button>
           </form>
 
+          )}
+          {!checkEmail && (
           <div className="mt-6 text-center text-sm text-gray-500">
             Já tem conta?{' '}
             <Link href="/login" className="text-blue-600 font-medium hover:underline">
               Entrar
             </Link>
           </div>
+          )}
         </div>
       </div>
     </div>
