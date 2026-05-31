@@ -87,9 +87,8 @@ export async function POST() {
   const payments = await paymentsRes.json()
   const firstPayment = payments?.data?.[0]
 
-  const paymentUrl = firstPayment?.invoiceUrl
-    ?? `https://www.asaas.com/c/${firstPayment?.id}`
-    ?? ''
+  const paymentUrl: string = firstPayment?.invoiceUrl
+    ?? (firstPayment?.id ? `https://www.asaas.com/c/${firstPayment.id}` : '')
 
   return NextResponse.json({ url: paymentUrl, subscriptionId: sub.id })
 }
