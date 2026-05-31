@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 export default function ForgotPasswordPage() {
@@ -36,7 +35,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
-            <Image src="/images/logoprincipal.png" alt="TabelaPro" width={180} height={54} className="max-w-44 w-full h-auto mx-auto" priority />
+            <img src="/images/logoprincipal.png" alt="TabelaPro" className="mx-auto w-full max-w-65 h-auto object-contain" />
           </Link>
           <h1 className="text-2xl font-bold mt-6 text-gray-900">Redefinir senha</h1>
           <p className="text-gray-500 mt-1 text-sm">Enviaremos um link para o seu email</p>

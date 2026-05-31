@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 export default function RegisterPage() {
@@ -55,7 +54,7 @@ export default function RegisterPage() {
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">
             <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
-              <Image src="/images/logoprincipal.png" alt="TabelaPro" width={180} height={54} className="max-w-44 w-full h-auto" priority />
+              <img src="/images/logoprincipal.png" alt="TabelaPro" className="mx-auto w-full max-w-65 h-auto object-contain" />
             </Link>
           </div>
           <div className="bg-white rounded-2xl shadow-lg p-8 text-center space-y-4">
