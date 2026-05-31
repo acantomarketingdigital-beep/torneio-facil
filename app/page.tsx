@@ -254,7 +254,7 @@ function scheduleDay(
   }
 
   // Post-process: try to align end times across courts
-  const balanced = balanceCourtEndTimes(matches, duration, restTime, breaks, hardLimitMin)
+  const balanced = balanceCourtEndTimes(matches, duration, restTime, hardLimitMin)
   const courtStats = computeCourtStats(balanced, courts)
   const finalLastStart = balanced.length > 0 ? Math.max(...balanced.map(m => m.startMin)) : lastStart
 
@@ -274,14 +274,14 @@ function computeCourtStats(matches: ScheduledMatch[], courts: number): CourtStat
 
 /**
  * Post-processing: tries to push the last match of early-finishing courts
- * to the global last-start time so all courts end together.
- * Respects team conflicts, minimum rest, breaks, and hard time limit.
+ * to the latest possible valid time, aligning end times across courts.
+ * Uses actual slot times already present in the schedule as candidates,
+ * trying from latest to earliest.
  */
 function balanceCourtEndTimes(
   matches: ScheduledMatch[],
   duration: number,
   restTime: number,
-  breaks: BreakWindow[],
   hardLimitMin: number,
 ): ScheduledMatch[] {
   if (matches.length === 0) return matches
@@ -289,7 +289,10 @@ function balanceCourtEndTimes(
   const targetLastStart = Math.max(...matches.map(m => m.startMin))
   const result = [...matches]
 
-  // Find courts finishing before the global target
+  // All distinct start times used in the schedule (valid slots)
+  const slotTimes = [...new Set(result.map(m => m.startMin))].sort((a, b) => a - b)
+
+  // For each court finishing before the global target
   const courtLastMap = new Map<number, number>()
   for (const m of result) {
     courtLastMap.set(m.court, Math.max(courtLastMap.get(m.court) ?? 0, m.startMin))
@@ -298,37 +301,41 @@ function balanceCourtEndTimes(
   for (const [court, courtLast] of courtLastMap) {
     if (courtLast >= targetLastStart) continue
 
-    // Find the last match of this court
+    // Find the last match of this court (use the latest startMin for this court)
     const lastIdx = result.reduce((best, m, idx) =>
       m.court === court && m.startMin === courtLast ? idx : best, -1)
     if (lastIdx === -1) continue
     const lastMatch = result[lastIdx]
-
-    // Candidate new start: the global target, skipping any breaks
-    const newStart = skipBreaks(targetLastStart, duration, breaks)
-    if (newStart > hardLimitMin || newStart === courtLast) continue
-
-    // Check team conflicts at newStart on any other court
     const homeId = lastMatch.home.id, awayId = lastMatch.away.id
-    const conflict = result.some((m, i) =>
-      i !== lastIdx &&
-      m.startMin === newStart &&
-      (m.home.id === homeId || m.away.id === homeId || m.home.id === awayId || m.away.id === awayId)
-    )
-    if (conflict) continue
 
-    // Check minimum rest for both teams from their previous match
-    let restOk = true
-    for (const tid of [homeId, awayId]) {
-      const prev = result
-        .filter((m, i) => i !== lastIdx && m.startMin < newStart && (m.home.id === tid || m.away.id === tid))
-        .sort((a, b) => b.startMin - a.startMin)[0]
-      if (prev && newStart - (prev.startMin + duration) < restTime) { restOk = false; break }
+    // Try slot times from latest to earliest (prefer moving to the latest possible)
+    const candidates = slotTimes.filter(t => t > courtLast && t <= targetLastStart).reverse()
+
+    for (const newStart of candidates) {
+      if (newStart > hardLimitMin) continue
+
+      // Check team conflict: no other match at newStart involving these teams
+      const conflict = result.some((m, i) =>
+        i !== lastIdx &&
+        m.startMin === newStart &&
+        (m.home.id === homeId || m.away.id === homeId || m.home.id === awayId || m.away.id === awayId)
+      )
+      if (conflict) continue
+
+      // Check minimum rest for both teams
+      let restOk = true
+      for (const tid of [homeId, awayId]) {
+        const prev = result
+          .filter((m, i) => i !== lastIdx && m.startMin < newStart && (m.home.id === tid || m.away.id === tid))
+          .sort((a, b) => b.startMin - a.startMin)[0]
+        if (prev && newStart - (prev.startMin + duration) < restTime) { restOk = false; break }
+      }
+      if (!restOk) continue
+
+      // Valid — move the match
+      result[lastIdx] = { ...lastMatch, startMin: newStart }
+      break
     }
-    if (!restOk) continue
-
-    // All checks passed — delay the match to align with the global last slot
-    result[lastIdx] = { ...lastMatch, startMin: newStart }
   }
 
   return result
