@@ -1,14 +1,22 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 type Format = 'round-robin' | 'groups' | 'knockout'
 type Gender = '' | 'FEM' | 'MAS' | 'MISTO'
 
+interface EventDate {
+  id: string
+  date: string
+  startTime: string
+}
+
 interface Config {
   name: string
-  date: string
   venue: string
   startTime: string
   duration: number
@@ -16,6 +24,9 @@ interface Config {
   restTime: number
   courts: number
   format: Format
+  minGamesPerTeam: number
+  regulation: string
+  dates: EventDate[]
 }
 
 interface Team {
@@ -26,6 +37,13 @@ interface Team {
   gender: Gender
 }
 
+interface RegisteredTeam {
+  id: string
+  name: string
+  category: string
+  gender: string
+}
+
 interface ScheduledMatch {
   court: number
   startMin: number
@@ -33,12 +51,27 @@ interface ScheduledMatch {
   away: Team
 }
 
+interface DateSchedule {
+  date: EventDate
+  matches: ScheduledMatch[]
+  roundIndex: number
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────────
+
 const toMin = (t: string) => {
   const p = t.split(':')
   return parseInt(p[0]) * 60 + parseInt(p[1])
 }
 const toTime = (m: number) =>
   `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+const fmtDate = (d: string) => {
+  if (!d) return '—'
+  const [y, mo, day] = d.split('-')
+  return `${day}/${mo}/${y}`
+}
+
+// ── Algorithm ──────────────────────────────────────────────────────────────────
 
 function buildMatchups(teams: Team[], format: Format): [Team, Team][] {
   const pairs: [Team, Team][] = []
@@ -51,12 +84,9 @@ function buildMatchups(teams: Team[], format: Format): [Team, Team][] {
 
   const groups = new Map<string, Team[]>()
   for (const t of teams) {
-    let key: string
-    if (format === 'groups') {
-      key = `${t.group || 'U'}|${t.category}|${t.gender}`
-    } else {
-      key = t.category || t.gender ? `${t.category}|${t.gender}` : 'all'
-    }
+    const key = format === 'groups'
+      ? `${t.group || 'U'}|${t.category}|${t.gender}`
+      : (t.category || t.gender ? `${t.category}|${t.gender}` : 'all')
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key)!.push(t)
   }
@@ -69,17 +99,36 @@ function buildMatchups(teams: Team[], format: Format): [Team, Team][] {
   return pairs
 }
 
-function scheduleMatches(teams: Team[], config: Config): ScheduledMatch[] {
-  const { courts, startTime, duration, interval, restTime, format } = config
-  const start = toMin(startTime)
-  const matchups = buildMatchups(teams, format)
+function repeatMatchups(base: [Team, Team][], minGames: number): [Team, Team][] {
+  if (minGames <= 0 || base.length === 0) return base
 
-  const courtEnd = Array(courts).fill(start)
+  const counts = new Map<string, number>()
+  for (const [h, a] of base) {
+    counts.set(h.id, (counts.get(h.id) ?? 0) + 1)
+    counts.set(a.id, (counts.get(a.id) ?? 0) + 1)
+  }
+  const maxPerRound = Math.max(...Array.from(counts.values()), 1)
+  const rounds = Math.ceil(minGames / maxPerRound)
+
+  const all: [Team, Team][] = []
+  for (let r = 0; r < rounds; r++) all.push(...base)
+  return all
+}
+
+function scheduleDay(
+  matchups: [Team, Team][],
+  courts: number,
+  startMin: number,
+  duration: number,
+  interval: number,
+  restTime: number
+): ScheduledMatch[] {
+  const courtEnd = Array(courts).fill(startMin)
   const teamEnd: Record<string, number> = {}
   const result: ScheduledMatch[] = []
 
   for (const [home, away] of matchups) {
-    const ready = Math.max(teamEnd[home.id] ?? start, teamEnd[away.id] ?? start)
+    const ready = Math.max(teamEnd[home.id] ?? startMin, teamEnd[away.id] ?? startMin)
     let bestC = 0, bestT = Infinity
     for (let c = 0; c < courts; c++) {
       const t = Math.max(courtEnd[c], ready)
@@ -95,18 +144,39 @@ function scheduleMatches(teams: Team[], config: Config): ScheduledMatch[] {
   return result.sort((a, b) => a.startMin - b.startMin || a.court - b.court)
 }
 
-const ROW_COLORS = [
-  'bg-pink-50',
-  'bg-sky-50',
-  'bg-emerald-50',
-  'bg-amber-50',
-  'bg-violet-50',
-  'bg-rose-50',
-]
+function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
+  const validDates = config.dates.filter(d => d.date)
+  if (validDates.length === 0) return []
+
+  const base = buildMatchups(teams, config.format)
+  const all = repeatMatchups(base, config.minGamesPerTeam)
+
+  // Distribute round-robin style across dates
+  const n = validDates.length
+  const buckets: [Team, Team][][] = Array.from({ length: n }, () => [])
+  all.forEach((m, i) => buckets[i % n].push(m))
+
+  return validDates.map((date, i) => ({
+    date,
+    roundIndex: i + 1,
+    matches: scheduleDay(
+      buckets[i],
+      config.courts,
+      toMin(date.startTime || config.startTime),
+      config.duration,
+      config.interval,
+      config.restTime
+    ),
+  }))
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const ROW_COLORS = ['bg-pink-50', 'bg-sky-50', 'bg-emerald-50', 'bg-amber-50', 'bg-violet-50', 'bg-rose-50']
+const today = new Date().toISOString().split('T')[0]
 
 const DEFAULT_CONFIG: Config = {
   name: '',
-  date: new Date().toISOString().split('T')[0],
   venue: '',
   startTime: '08:30',
   duration: 60,
@@ -114,7 +184,12 @@ const DEFAULT_CONFIG: Config = {
   restTime: 70,
   courts: 3,
   format: 'round-robin',
+  minGamesPerTeam: 0,
+  regulation: '',
+  dates: [{ id: '1', date: today, startTime: '08:30' }],
 }
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [step, setStep] = useState<'config' | 'teams' | 'table'>('config')
@@ -124,43 +199,105 @@ export default function Home() {
     { id: '2', name: '', group: '', category: '', gender: '' },
     { id: '3', name: '', group: '', category: '', gender: '' },
   ])
-  const [matches, setMatches] = useState<ScheduledMatch[]>([])
+  const [schedules, setSchedules] = useState<DateSchedule[]>([])
+  const [user, setUser] = useState<{ id: string } | null | undefined>(undefined)
+  const [suggestions, setSuggestions] = useState<RegisteredTeam[]>([])
+  const [activeTeamId, setActiveTeamId] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null))
+  }, [])
+
+  // ── Config helpers ─────────────────────────────────────────────────────────
 
   const cfg = (key: keyof Config, val: string | number) =>
     setConfig(c => ({ ...c, [key]: val }))
 
+  const addDate = () => setConfig(c => ({
+    ...c,
+    dates: [...c.dates, { id: Date.now().toString(), date: '', startTime: c.startTime }],
+  }))
+  const removeDate = (id: string) =>
+    setConfig(c => ({ ...c, dates: c.dates.filter(d => d.id !== id) }))
+  const updateDate = (id: string, field: keyof EventDate, val: string) =>
+    setConfig(c => ({
+      ...c,
+      dates: c.dates.map(d => d.id === id ? { ...d, [field]: val } : d),
+    }))
+
+  // ── Teams helpers ──────────────────────────────────────────────────────────
+
   const addTeam = () =>
     setTeams(t => [...t, { id: Date.now().toString(), name: '', group: '', category: '', gender: '' }])
-
   const removeTeam = (id: string) =>
     setTeams(t => t.length > 1 ? t.filter(x => x.id !== id) : t)
-
   const updateTeam = (id: string, field: keyof Team, val: string) =>
     setTeams(t => t.map(x => x.id === id ? { ...x, [field]: val } : x))
+
+  // ── Autocomplete ───────────────────────────────────────────────────────────
+
+  const fetchSuggestions = useCallback((teamId: string, query: string) => {
+    clearTimeout(debounceRef.current)
+    if (!user || !query.trim()) { setSuggestions([]); setActiveTeamId(null); return }
+    debounceRef.current = setTimeout(async () => {
+      const res = await fetch(`/api/teams/search?q=${encodeURIComponent(query)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setSuggestions(data)
+        setActiveTeamId(data.length > 0 ? teamId : null)
+      }
+    }, 280)
+  }, [user])
+
+  const applySuggestion = (teamId: string, s: RegisteredTeam) => {
+    updateTeam(teamId, 'name', s.name)
+    if (s.category) updateTeam(teamId, 'category', s.category)
+    if (s.gender) updateTeam(teamId, 'gender', s.gender as Gender)
+    setSuggestions([])
+    setActiveTeamId(null)
+  }
+
+  // ── Generate ───────────────────────────────────────────────────────────────
 
   const generate = () => {
     const valid = teams.filter(t => t.name.trim())
     if (valid.length < 2) { alert('Adicione pelo menos 2 times com nome.'); return }
-    setMatches(scheduleMatches(valid, config))
+    if (config.dates.every(d => !d.date)) { alert('Adicione pelo menos uma data.'); return }
+
+    const result = generateSchedule(valid, config)
+    setSchedules(result)
     setStep('table')
+    setSaved(false)
+
+    if (user) {
+      fetch('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(valid),
+      }).then(() => setSaved(true)).catch(() => {})
+    }
   }
 
-  const showGroup = matches.some(m => m.home.group || m.away.group)
-  const showCategory = matches.some(m => m.home.category || m.away.category)
-  const showGender = matches.some(m => m.home.gender || m.away.gender)
+  // ── Display helpers ────────────────────────────────────────────────────────
+
+  const allMatches = schedules.flatMap(s => s.matches)
+  const showGroup = allMatches.some(m => m.home.group || m.away.group)
+  const showCategory = allMatches.some(m => m.home.category || m.away.category)
+  const showGender = allMatches.some(m => m.home.gender || m.away.gender)
 
   const colorMap = new Map<string, number>()
   let ci = 0
-  for (const m of matches) {
-    const key = `${m.home.category}|${m.home.gender}`
-    if (!colorMap.has(key)) colorMap.set(key, ci++)
+  for (const m of allMatches) {
+    const k = `${m.home.category}|${m.home.gender}`
+    if (!colorMap.has(k)) colorMap.set(k, ci++)
   }
+  const rowColor = (m: ScheduledMatch) =>
+    ROW_COLORS[(colorMap.get(`${m.home.category}|${m.home.gender}`) ?? 0) % ROW_COLORS.length]
 
-  const fmtDate = (d: string) => {
-    if (!d) return ''
-    const [y, mo, day] = d.split('-')
-    return `${day}/${mo}/${y}`
-  }
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -170,6 +307,7 @@ export default function Home() {
           body { background: white; }
           .print-card { box-shadow: none !important; border-radius: 0 !important; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .page-break { page-break-before: always; }
         }
       `}</style>
 
@@ -179,26 +317,30 @@ export default function Home() {
           <span className="text-2xl">🏆</span>
           <span className="font-bold text-xl">TabelaPro</span>
         </div>
-        <Link href="/dashboard" className="text-xs text-blue-200 hover:text-white border border-blue-500 rounded-lg px-3 py-1.5 transition-colors">
-          Campeonatos salvos
-        </Link>
+        <div className="flex items-center gap-3">
+          {user === undefined ? null : user ? (
+            <>
+              <Link href="/times" className="text-xs text-blue-200 hover:text-white">Times</Link>
+              <Link href="/dashboard" className="text-xs text-blue-200 hover:text-white border border-blue-500 rounded-lg px-3 py-1.5">Dashboard</Link>
+            </>
+          ) : (
+            <Link href="/login" className="text-xs text-white border border-blue-400 rounded-lg px-3 py-1.5 hover:bg-blue-600 transition-colors">
+              Entrar
+            </Link>
+          )}
+        </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6">
-        {/* Steps */}
-        <div className="no-print flex items-center gap-2 mb-6 text-sm">
+        {/* Step indicator */}
+        <div className="no-print flex items-center gap-2 mb-6">
           {(['config', 'teams', 'table'] as const).map((s, i) => (
             <div key={s} className="flex items-center gap-2">
               {i > 0 && <div className="h-px w-6 bg-gray-300" />}
               <button
-                onClick={() => {
-                  if (s === 'table' && matches.length === 0) return
-                  setStep(s)
-                }}
+                onClick={() => { if (s === 'table' && schedules.length === 0) return; setStep(s) }}
                 className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                  step === s
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white border text-gray-500 hover:border-blue-400'
+                  step === s ? 'bg-blue-600 text-white' : 'bg-white border text-gray-500 hover:border-blue-400'
                 }`}
               >
                 {i + 1}. {s === 'config' ? 'Torneio' : s === 'teams' ? 'Times' : 'Tabela'}
@@ -207,68 +349,96 @@ export default function Home() {
           ))}
         </div>
 
-        {/* ── STEP 1: Config ── */}
+        {/* ── STEP 1: Config ──────────────────────────────────────────────────── */}
         {step === 'config' && (
-          <div className="bg-white rounded-2xl shadow p-6 space-y-5">
+          <div className="bg-white rounded-2xl shadow p-6 space-y-6">
             <h2 className="font-bold text-gray-900 text-lg">Informações do torneio</h2>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nome do torneio</label>
-              <input
-                className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                placeholder="Ex: Copa Municipal de Vôlei 2025"
-                value={config.name}
-                onChange={e => cfg('name', e.target.value)}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
+            {/* Basic */}
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Data</label>
-                <input type="date"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome do torneio</label>
+                <input
                   className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={config.date} onChange={e => cfg('date', e.target.value)} />
+                  placeholder="Ex: Copa Municipal de Vôlei 2025"
+                  value={config.name}
+                  onChange={e => cfg('name', e.target.value)}
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Início</label>
-                <input type="time"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Local</label>
+                <input
                   className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={config.startTime} onChange={e => cfg('startTime', e.target.value)} />
+                  placeholder="Ex: Ginásio Municipal"
+                  value={config.venue}
+                  onChange={e => cfg('venue', e.target.value)}
+                />
               </div>
             </div>
 
+            {/* Dates */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Local</label>
-              <input
-                className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                placeholder="Ex: Ginásio Municipal"
-                value={config.venue} onChange={e => cfg('venue', e.target.value)} />
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-gray-700">Datas do torneio</label>
+                <button onClick={addDate} className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                  <span>+</span> Adicionar data
+                </button>
+              </div>
+              <div className="space-y-2">
+                {config.dates.map((d, i) => (
+                  <div key={d.id} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-16 shrink-0">Rodada {i + 1}</span>
+                    <input type="date"
+                      className="flex-1 border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={d.date}
+                      onChange={e => updateDate(d.id, 'date', e.target.value)}
+                    />
+                    <input type="time"
+                      className="w-28 border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      value={d.startTime}
+                      onChange={e => updateDate(d.id, 'startTime', e.target.value)}
+                    />
+                    {config.dates.length > 1 && (
+                      <button onClick={() => removeDate(d.id)} className="text-gray-300 hover:text-red-400 text-xl leading-none">×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
+            {/* Courts & time */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Quadras / Campos</label>
                 <input type="number" min={1} max={20}
                   className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={config.courts} onChange={e => cfg('courts', Number(e.target.value))} />
+                  value={config.courts}
+                  onChange={e => cfg('courts', Number(e.target.value))}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Duração do jogo (min)</label>
                 <input type="number" min={10} step={5}
                   className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={config.duration} onChange={e => cfg('duration', Number(e.target.value))} />
+                  value={config.duration}
+                  onChange={e => cfg('duration', Number(e.target.value))}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Intervalo entre jogos (min)</label>
                 <input type="number" min={0} step={5}
                   className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={config.interval} onChange={e => cfg('interval', Number(e.target.value))} />
+                  value={config.interval}
+                  onChange={e => cfg('interval', Number(e.target.value))}
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Descanso por time (min)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Descanso mínimo por time (min)</label>
                 <input type="number" min={0} step={5}
                   className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  value={config.restTime} onChange={e => cfg('restTime', Number(e.target.value))} />
+                  value={config.restTime}
+                  onChange={e => cfg('restTime', Number(e.target.value))}
+                />
               </div>
             </div>
 
@@ -277,16 +447,15 @@ export default function Home() {
               <label className="block text-sm font-medium text-gray-700 mb-2">Formato</label>
               <div className="grid grid-cols-3 gap-3">
                 {([
-                  { v: 'round-robin', label: 'Todos contra Todos', desc: 'Cada time enfrenta todos' },
-                  { v: 'groups', label: 'Por Chaves', desc: 'Times em grupos (A, B, C...)' },
-                  { v: 'knockout', label: 'Mata-Mata', desc: 'Eliminatória direta' },
-                ] as const).map(f => (
+                  { v: 'round-robin' as const, label: 'Todos contra Todos', desc: 'Cada time enfrenta todos' },
+                  { v: 'groups' as const, label: 'Por Chaves', desc: 'Times em grupos (A, B, C...)' },
+                  { v: 'knockout' as const, label: 'Mata-Mata', desc: 'Eliminatória direta' },
+                ]).map(f => (
                   <button key={f.v} onClick={() => cfg('format', f.v)}
                     className={`text-left p-3 rounded-xl border-2 transition-colors ${
-                      config.format === f.v
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}>
+                      config.format === f.v ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
                     <div className="font-semibold text-sm">{f.label}</div>
                     <div className="text-xs text-gray-500 mt-0.5">{f.desc}</div>
                   </button>
@@ -294,24 +463,63 @@ export default function Home() {
               </div>
             </div>
 
-            <button onClick={() => setStep('teams')}
-              className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors">
+            {/* Min games */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Mínimo de jogos por time
+              </label>
+              <div className="flex items-center gap-3">
+                <input type="number" min={0} max={50}
+                  className="w-24 border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={config.minGamesPerTeam}
+                  onChange={e => cfg('minGamesPerTeam', Number(e.target.value))}
+                />
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {config.minGamesPerTeam === 0
+                    ? 'Padrão: gera um turno completo'
+                    : `Cada time joga ao menos ${config.minGamesPerTeam} partidas no total, distribuídas nas ${config.dates.length} data${config.dates.length !== 1 ? 's' : ''}`}
+                </p>
+              </div>
+            </div>
+
+            {/* Regulation */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Regulamento (opcional)</label>
+              <textarea
+                rows={4}
+                className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
+                placeholder="Descreva as regras do torneio, pontuação, critérios de desempate..."
+                value={config.regulation}
+                onChange={e => cfg('regulation', e.target.value)}
+              />
+            </div>
+
+            <button
+              onClick={() => setStep('teams')}
+              className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+            >
               Próximo: Cadastrar Times →
             </button>
           </div>
         )}
 
-        {/* ── STEP 2: Teams ── */}
+        {/* ── STEP 2: Teams ──────────────────────────────────────────────────── */}
         {step === 'teams' && (
           <div className="bg-white rounded-2xl shadow p-6 space-y-4">
             <div>
               <h2 className="font-bold text-gray-900 text-lg">Times</h2>
               <p className="text-sm text-gray-400 mt-0.5">
                 {config.format === 'groups'
-                  ? 'Preencha a Chave (A, B, C...). Times da mesma chave se enfrentam entre si.'
+                  ? 'Preencha a Chave (A, B, C...). Times da mesma chave se enfrentam.'
                   : config.format === 'round-robin'
-                  ? 'Times com mesma Categoria e Naipe se enfrentam. Deixe em branco para todos jogarem entre si.'
-                  : 'Pares formados pela ordem: 1° x 2°, 3° x 4°...'}
+                  ? 'Times com mesma Categoria/Naipe jogam entre si. Sem categoria = todos se enfrentam.'
+                  : 'Pares formados pela ordem: 1°×2°, 3°×4°...'}
+                {user && (
+                  <span className="ml-1 text-blue-400 text-xs">
+                    · Autocomplete ativo —{' '}
+                    <Link href="/times" className="underline hover:text-blue-600">gerenciar times</Link>
+                  </span>
+                )}
               </p>
             </div>
 
@@ -331,18 +539,39 @@ export default function Home() {
                   {teams.map((t, i) => (
                     <tr key={t.id} className="border-b border-gray-50">
                       <td className="py-1.5 text-center text-xs text-gray-300">{i + 1}</td>
-                      <td className="pr-2 py-1.5">
+                      <td className="pr-2 py-1.5 relative">
                         <input
                           className="w-full border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           placeholder={`Time ${i + 1}`}
                           value={t.name}
-                          onChange={e => updateTeam(t.id, 'name', e.target.value)}
+                          autoComplete="off"
+                          onChange={e => {
+                            updateTeam(t.id, 'name', e.target.value)
+                            fetchSuggestions(t.id, e.target.value)
+                          }}
+                          onBlur={() => setTimeout(() => { setSuggestions([]); setActiveTeamId(null) }, 200)}
                         />
+                        {/* Autocomplete dropdown */}
+                        {activeTeamId === t.id && suggestions.length > 0 && (
+                          <div className="absolute left-0 right-2 top-full mt-0.5 z-50 bg-white border rounded-xl shadow-lg overflow-hidden">
+                            {suggestions.map(s => (
+                              <button
+                                key={s.id}
+                                onMouseDown={() => applySuggestion(t.id, s)}
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex items-center gap-2 border-b border-gray-50 last:border-0"
+                              >
+                                <span className="flex-1 font-medium">{s.name}</span>
+                                {s.category && <span className="text-xs text-gray-400 bg-gray-100 rounded px-1">{s.category}</span>}
+                                {s.gender && <span className="text-xs text-gray-400 bg-gray-100 rounded px-1">{s.gender}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       {config.format === 'groups' && (
                         <td className="pr-2 py-1.5">
                           <input
-                            className="w-14 text-center border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none uppercase"
+                            className="w-14 text-center border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             placeholder="A"
                             value={t.group}
                             onChange={e => updateTeam(t.id, 'group', e.target.value.toUpperCase())}
@@ -351,7 +580,7 @@ export default function Home() {
                       )}
                       <td className="pr-2 py-1.5">
                         <input
-                          className="w-24 text-center border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none uppercase"
+                          className="w-24 text-center border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           placeholder="SUB 14"
                           value={t.category}
                           onChange={e => updateTeam(t.id, 'category', e.target.value.toUpperCase())}
@@ -370,8 +599,7 @@ export default function Home() {
                         </select>
                       </td>
                       <td className="py-1.5">
-                        <button onClick={() => removeTeam(t.id)}
-                          className="text-gray-200 hover:text-red-400 text-xl leading-none pl-1">×</button>
+                        <button onClick={() => removeTeam(t.id)} className="text-gray-200 hover:text-red-400 text-xl leading-none pl-1">×</button>
                       </td>
                     </tr>
                   ))}
@@ -379,8 +607,7 @@ export default function Home() {
               </table>
             </div>
 
-            <button onClick={addTeam}
-              className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+            <button onClick={addTeam} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
               <span className="text-base">+</span> Adicionar time
             </button>
 
@@ -397,85 +624,99 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── STEP 3: Table ── */}
+        {/* ── STEP 3: Table ──────────────────────────────────────────────────── */}
         {step === 'table' && (
           <div className="space-y-4">
             <div className="no-print flex items-center justify-between">
-              <button onClick={() => setStep('teams')}
-                className="text-sm text-gray-500 hover:text-gray-700">
+              <button onClick={() => setStep('teams')} className="text-sm text-gray-500 hover:text-gray-700">
                 ← Editar times
               </button>
-              <button onClick={() => window.print()}
-                className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2">
-                🖨️ Imprimir / Baixar PDF
-              </button>
+              <div className="flex items-center gap-3">
+                {saved && <span className="text-xs text-green-600 font-medium">✓ Times salvos</span>}
+                <button
+                  onClick={() => window.print()}
+                  className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2"
+                >
+                  🖨️ Imprimir / PDF
+                </button>
+              </div>
             </div>
 
             <div className="print-card bg-white rounded-2xl shadow p-6">
-              {/* Header */}
-              <div className="text-center mb-5">
+              {/* Tournament header */}
+              <div className="text-center border-b pb-4 mb-6">
                 <h1 className="text-2xl font-black text-blue-800 tracking-wide uppercase">
                   {config.name || 'TORNEIO'}
                 </h1>
-                <p className="text-xl font-bold text-gray-700 mt-1">
-                  RODADA {fmtDate(config.date)}
-                </p>
                 {config.venue && (
-                  <p className="text-sm text-gray-500 mt-0.5 uppercase">
-                    LOCAL: {config.venue}
-                  </p>
+                  <p className="text-sm text-gray-500 mt-0.5 uppercase">LOCAL: {config.venue}</p>
                 )}
               </div>
 
-              {/* Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr className="bg-blue-800 text-white text-xs">
-                      <th className="border border-blue-700 px-3 py-2 text-center font-bold">QUADRA</th>
-                      <th className="border border-blue-700 px-3 py-2 text-center font-bold">HORÁRIO</th>
-                      <th className="border border-blue-700 px-3 py-2 font-bold">EQUIPE</th>
-                      <th className="border border-blue-700 px-2 py-2 text-center font-bold">X</th>
-                      <th className="border border-blue-700 px-3 py-2 font-bold">EQUIPE</th>
-                      {showGroup && <th className="border border-blue-700 px-3 py-2 text-center font-bold">CHAVE</th>}
-                      {showCategory && <th className="border border-blue-700 px-3 py-2 text-center font-bold">CATEGORIA</th>}
-                      {showGender && <th className="border border-blue-700 px-3 py-2 text-center font-bold">NAIPE</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {matches.map((m, i) => {
-                      const idx = colorMap.get(`${m.home.category}|${m.home.gender}`) ?? 0
-                      const rowCls = ROW_COLORS[idx % ROW_COLORS.length]
-                      return (
-                        <tr key={i} className={rowCls}>
-                          <td className="border border-gray-200 px-3 py-2 text-center font-bold">{m.court}</td>
-                          <td className="border border-gray-200 px-3 py-2 text-center font-bold">{toTime(m.startMin)}</td>
-                          <td className="border border-gray-200 px-3 py-2 font-bold">{m.home.name}</td>
-                          <td className="border border-gray-200 px-2 py-2 text-center font-bold text-gray-400">X</td>
-                          <td className="border border-gray-200 px-3 py-2 font-bold">{m.away.name}</td>
-                          {showGroup && <td className="border border-gray-200 px-3 py-2 text-center font-semibold">{m.home.group || '—'}</td>}
-                          {showCategory && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.category || '—'}</td>}
-                          {showGender && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.gender || '—'}</td>}
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {/* One table per rodada */}
+              {schedules.map((s, di) => (
+                s.matches.length > 0 && (
+                  <div key={s.date.id} className={di > 0 ? 'page-break pt-6 mt-6 border-t' : ''}>
+                    <div className="text-center mb-3">
+                      <p className="text-xl font-bold text-gray-800">
+                        RODADA {s.roundIndex} — {fmtDate(s.date.date)}
+                      </p>
+                    </div>
 
-              <p className="text-xs text-gray-300 text-center mt-4">
-                {matches.length} jogo{matches.length !== 1 ? 's' : ''} •{' '}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border-collapse">
+                        <thead>
+                          <tr className="bg-blue-800 text-white text-xs">
+                            <th className="border border-blue-700 px-3 py-2 text-center font-bold">QUADRA</th>
+                            <th className="border border-blue-700 px-3 py-2 text-center font-bold">HORÁRIO</th>
+                            <th className="border border-blue-700 px-3 py-2 font-bold">EQUIPE</th>
+                            <th className="border border-blue-700 px-2 py-2 text-center font-bold">X</th>
+                            <th className="border border-blue-700 px-3 py-2 font-bold">EQUIPE</th>
+                            {showGroup && <th className="border border-blue-700 px-3 py-2 text-center font-bold">CHAVE</th>}
+                            {showCategory && <th className="border border-blue-700 px-3 py-2 text-center font-bold">CATEGORIA</th>}
+                            {showGender && <th className="border border-blue-700 px-3 py-2 text-center font-bold">NAIPE</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {s.matches.map((m, j) => (
+                            <tr key={j} className={rowColor(m)}>
+                              <td className="border border-gray-200 px-3 py-2 text-center font-bold">{m.court}</td>
+                              <td className="border border-gray-200 px-3 py-2 text-center font-bold">{toTime(m.startMin)}</td>
+                              <td className="border border-gray-200 px-3 py-2 font-bold">{m.home.name}</td>
+                              <td className="border border-gray-200 px-2 py-2 text-center text-gray-400 font-bold">×</td>
+                              <td className="border border-gray-200 px-3 py-2 font-bold">{m.away.name}</td>
+                              {showGroup && <td className="border border-gray-200 px-3 py-2 text-center font-semibold">{m.home.group || '—'}</td>}
+                              {showCategory && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.category || '—'}</td>}
+                              {showGender && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.gender || '—'}</td>}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-gray-300 text-center mt-1.5">
+                      {s.matches.length} jogo{s.matches.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                )
+              ))}
+
+              {/* Regulation */}
+              {config.regulation && (
+                <div className="border-t mt-6 pt-4">
+                  <h3 className="font-bold text-gray-800 text-sm mb-2 uppercase tracking-wide">Regulamento</h3>
+                  <p className="text-sm text-gray-600 whitespace-pre-line leading-relaxed">{config.regulation}</p>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-300 text-center border-t mt-4 pt-4">
+                {allMatches.length} jogo{allMatches.length !== 1 ? 's' : ''} no total •{' '}
                 {config.courts} quadra{config.courts !== 1 ? 's' : ''} •{' '}
                 {config.duration}min por jogo • TabelaPro
               </p>
             </div>
 
-            {/* Regenerate */}
             <div className="no-print text-center">
-              <button
-                onClick={() => { setStep('config') }}
-                className="text-sm text-gray-400 hover:text-gray-600 underline"
-              >
+              <button onClick={() => { setStep('config'); setSchedules([]) }} className="text-sm text-gray-400 hover:text-gray-600 underline">
                 Criar nova tabela
               </button>
             </div>
