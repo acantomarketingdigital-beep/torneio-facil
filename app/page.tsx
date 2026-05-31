@@ -7,6 +7,14 @@ import { createClient } from '@/lib/supabase/client'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Gender = '' | 'FEM' | 'MAS' | 'MISTO'
+type BreakMode = 'yes' | 'no' | 'custom'
+
+interface BreakConfig {
+  mode: BreakMode
+  name: string
+  startTime: string
+  endTime: string
+}
 
 interface EventDate {
   id: string
@@ -25,6 +33,7 @@ interface Config {
   minGamesPerTeam: number
   regulation: string
   dates: EventDate[]
+  lunchBreak: BreakConfig
 }
 
 interface Team {
@@ -168,13 +177,36 @@ function repeatMatchups(base: [Team, Team][], minGames: number): [Team, Team][] 
   return all
 }
 
+interface BreakWindow { startMin: number; endMin: number; name: string }
+
+// Advances time past any break that would be invaded (start inside or game end crosses break start)
+function skipBreaks(t: number, duration: number, breaks: BreakWindow[]): number {
+  let cur = t
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const brk of breaks) {
+      // starts inside break → jump to break end
+      if (cur >= brk.startMin && cur < brk.endMin) {
+        cur = brk.endMin; changed = true; break
+      }
+      // game would invade break start → jump to break end
+      if (cur < brk.startMin && cur + duration > brk.startMin) {
+        cur = brk.endMin; changed = true; break
+      }
+    }
+  }
+  return cur
+}
+
 function scheduleDay(
   matchups: [Team, Team][],
   courts: number,
   startMin: number,
   duration: number,
   interval: number,
-  restTime: number
+  restTime: number,
+  breaks: BreakWindow[] = []
 ): ScheduledMatch[] {
   const courtEnd = Array(courts).fill(startMin)
   const teamEnd: Record<string, number> = {}
@@ -184,7 +216,8 @@ function scheduleDay(
     const ready = Math.max(teamEnd[home.id] ?? startMin, teamEnd[away.id] ?? startMin)
     let bestC = 0, bestT = Infinity
     for (let c = 0; c < courts; c++) {
-      const t = Math.max(courtEnd[c], ready)
+      const raw = Math.max(courtEnd[c], ready)
+      const t = skipBreaks(raw, duration, breaks)
       if (t < bestT) { bestT = t; bestC = c }
     }
     const end = bestT + duration
@@ -194,7 +227,14 @@ function scheduleDay(
     result.push({ court: bestC + 1, startMin: bestT, home, away })
   }
 
-  return result.sort((a, b) => a.court - b.court || a.startMin - b.startMin)
+  // Sort by time first so break rows appear naturally between time blocks
+  return result.sort((a, b) => a.startMin - b.startMin || a.court - b.court)
+}
+
+function getBreakWindows(config: Config): BreakWindow[] {
+  const lb = config.lunchBreak
+  if (lb.mode === 'no') return []
+  return [{ startMin: toMin(lb.startTime), endMin: toMin(lb.endTime), name: lb.name }]
 }
 
 function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
@@ -203,6 +243,7 @@ function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
 
   const base = buildMatchups(teams)
   const all = repeatMatchups(base, config.minGamesPerTeam)
+  const breaks = getBreakWindows(config)
 
   // Distribute round-robin style across dates
   const n = validDates.length
@@ -218,7 +259,8 @@ function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
       toMin(date.startTime || config.startTime),
       config.duration,
       config.interval,
-      config.restTime
+      config.restTime,
+      breaks
     ),
   }))
 }
@@ -227,6 +269,8 @@ function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
 
 const ROW_COLORS = ['bg-pink-50', 'bg-sky-50', 'bg-emerald-50', 'bg-amber-50', 'bg-violet-50', 'bg-rose-50']
 const today = new Date().toISOString().split('T')[0]
+
+const DEFAULT_BREAK: BreakConfig = { mode: 'yes', name: 'Almoço', startTime: '13:00', endTime: '14:00' }
 
 const DEFAULT_CONFIG: Config = {
   name: '',
@@ -239,6 +283,7 @@ const DEFAULT_CONFIG: Config = {
   minGamesPerTeam: 0,
   regulation: '',
   dates: [{ id: '1', date: today, startTime: '08:30' }],
+  lunchBreak: DEFAULT_BREAK,
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -267,6 +312,9 @@ export default function Home() {
 
   const cfg = (key: keyof Config, val: string | number) =>
     setConfig(c => ({ ...c, [key]: val }))
+
+  const setBreak = (patch: Partial<BreakConfig>) =>
+    setConfig(c => ({ ...c, lunchBreak: { ...c.lunchBreak, ...patch } }))
 
   const addDate = () => setConfig(c => ({
     ...c,
@@ -513,6 +561,57 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Lunch break */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Pausa de almoço</label>
+              <div className="space-y-2">
+                {([
+                  { v: 'yes' as const, label: 'Sim, bloquear das 13:00 às 14:00', desc: 'Recomendado' },
+                  { v: 'no' as const, label: 'Não, usar horário de almoço para jogos', desc: '' },
+                  { v: 'custom' as const, label: 'Personalizar pausa', desc: '' },
+                ] as const).map(opt => (
+                  <label key={opt.v} className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
+                    config.lunchBreak.mode === opt.v ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                  }`}>
+                    <input type="radio" name="lunchBreak" value={opt.v}
+                      checked={config.lunchBreak.mode === opt.v}
+                      onChange={() => setBreak({ mode: opt.v })}
+                      className="mt-0.5 accent-blue-600" />
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">{opt.label}</span>
+                      {opt.desc && <span className="ml-2 text-xs text-blue-600 font-medium">{opt.desc}</span>}
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              {config.lunchBreak.mode === 'custom' && (
+                <div className="mt-3 p-4 bg-gray-50 rounded-xl space-y-3 border border-gray-200">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Nome da pausa</label>
+                    <input value={config.lunchBreak.name}
+                      onChange={e => setBreak({ name: e.target.value })}
+                      placeholder="Ex: Almoço"
+                      className="w-full border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Início da pausa</label>
+                      <input type="time" value={config.lunchBreak.startTime}
+                        onChange={e => setBreak({ startTime: e.target.value })}
+                        className="w-full border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Fim da pausa</label>
+                      <input type="time" value={config.lunchBreak.endTime}
+                        onChange={e => setBreak({ endTime: e.target.value })}
+                        className="w-full border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Regulation */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Regulamento (opcional)</label>
@@ -670,8 +769,30 @@ export default function Home() {
               </div>
 
               {/* One table per rodada */}
-              {schedules.map((s, di) => (
-                s.matches.length > 0 && (
+              {schedules.map((s, di) => {
+                if (s.matches.length === 0) return null
+                const activeBreaks = getBreakWindows(config)
+                const colCount = 5 + (showGroup ? 1 : 0) + (showCategory ? 1 : 0) + (showGender ? 1 : 0)
+
+                // Build rows: match rows + break rows inserted at the right position
+                type Row = { kind: 'match'; m: ScheduledMatch } | { kind: 'break'; brk: BreakWindow }
+                const rows: Row[] = []
+                let breakInserted = new Set<number>()
+                for (let j = 0; j < s.matches.length; j++) {
+                  const m = s.matches[j]
+                  const prev = j > 0 ? s.matches[j - 1] : null
+                  for (const brk of activeBreaks) {
+                    if (!breakInserted.has(brk.startMin) &&
+                        (!prev || prev.startMin < brk.endMin) &&
+                        m.startMin >= brk.endMin) {
+                      rows.push({ kind: 'break', brk })
+                      breakInserted.add(brk.startMin)
+                    }
+                  }
+                  rows.push({ kind: 'match', m })
+                }
+
+                return (
                   <div key={s.date.id} className={di > 0 ? 'page-break pt-6 mt-6 border-t' : ''}>
                     <div className="text-center mb-3">
                       <p className="text-xl font-bold text-gray-800">
@@ -694,18 +815,30 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody>
-                          {s.matches.map((m, j) => (
-                            <tr key={j} className={rowColor(m)}>
-                              <td className="border border-gray-200 px-3 py-2 text-center font-bold">{m.court}</td>
-                              <td className="border border-gray-200 px-3 py-2 text-center font-bold">{toTime(m.startMin)}</td>
-                              <td className="border border-gray-200 px-3 py-2 font-bold">{m.home.name}</td>
-                              <td className="border border-gray-200 px-2 py-2 text-center text-gray-400 font-bold">×</td>
-                              <td className="border border-gray-200 px-3 py-2 font-bold">{m.away.name}</td>
-                              {showGroup && <td className="border border-gray-200 px-3 py-2 text-center font-semibold">{m.home.group || '—'}</td>}
-                              {showCategory && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.category || '—'}</td>}
-                              {showGender && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.gender || '—'}</td>}
-                            </tr>
-                          ))}
+                          {rows.map((row, j) => {
+                            if (row.kind === 'break') {
+                              return (
+                                <tr key={`brk-${j}`} className="bg-orange-50">
+                                  <td colSpan={colCount} className="border border-orange-300 px-3 py-2.5 text-center text-sm font-bold text-orange-700">
+                                    ⏸️ {row.brk.name}: {toTime(row.brk.startMin)} às {toTime(row.brk.endMin)}
+                                  </td>
+                                </tr>
+                              )
+                            }
+                            const m = row.m
+                            return (
+                              <tr key={`m-${j}`} className={rowColor(m)}>
+                                <td className="border border-gray-200 px-3 py-2 text-center font-bold">{m.court}</td>
+                                <td className="border border-gray-200 px-3 py-2 text-center font-bold">{toTime(m.startMin)}</td>
+                                <td className="border border-gray-200 px-3 py-2 font-bold">{m.home.name}</td>
+                                <td className="border border-gray-200 px-2 py-2 text-center text-gray-400 font-bold">×</td>
+                                <td className="border border-gray-200 px-3 py-2 font-bold">{m.away.name}</td>
+                                {showGroup && <td className="border border-gray-200 px-3 py-2 text-center font-semibold">{m.home.group || '—'}</td>}
+                                {showCategory && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.category || '—'}</td>}
+                                {showGender && <td className="border border-gray-200 px-3 py-2 text-center">{m.home.gender || '—'}</td>}
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -719,7 +852,7 @@ export default function Home() {
                     </p>
                   </div>
                 )
-              ))}
+              })}
 
               {/* Regulation */}
               {config.regulation && (
@@ -729,7 +862,12 @@ export default function Home() {
                 </div>
               )}
 
-              <p className="text-xs text-gray-300 text-center border-t mt-4 pt-4">
+              <p className="text-xs text-gray-400 text-center border-t mt-4 pt-3">
+                {config.lunchBreak.mode !== 'no'
+                  ? `✓ Pausa de almoço respeitada: ${config.lunchBreak.startTime} às ${config.lunchBreak.endTime}`
+                  : '— Tabela gerada sem pausa de almoço'}
+              </p>
+              <p className="text-xs text-gray-300 text-center mt-1">
                 {allMatches.length} jogo{allMatches.length !== 1 ? 's' : ''} no total •{' '}
                 {config.courts} quadra{config.courts !== 1 ? 's' : ''} •{' '}
                 {config.duration}min por jogo • TabelaPro
