@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 
 type Gender = '' | 'FEM' | 'MAS' | 'MISTO'
 type BreakMode = 'yes' | 'no' | 'custom'
+type TableView = 'court' | 'time'
 
 interface BreakConfig {
   mode: BreakMode
@@ -34,6 +35,8 @@ interface Config {
   regulation: string
   dates: EventDate[]
   lunchBreak: BreakConfig
+  idealLastGameTime: string
+  allowExtraSlot: boolean
 }
 
 interface Team {
@@ -61,7 +64,10 @@ interface ScheduledMatch {
 interface DateSchedule {
   date: EventDate
   matches: ScheduledMatch[]
+  pending: [Team, Team][]
   roundIndex: number
+  lastStart: number
+  usedExtraSlot: boolean
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
@@ -70,8 +76,10 @@ const toMin = (t: string) => {
   const p = t.split(':')
   return parseInt(p[0]) * 60 + parseInt(p[1])
 }
-const toTime = (m: number) =>
-  `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+const toTime = (m: number) => {
+  if (m >= 24 * 60) return '—'
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
 const fmtDate = (d: string) => {
   if (!d) return '—'
   const [y, mo, day] = d.split('-')
@@ -80,7 +88,6 @@ const fmtDate = (d: string) => {
 
 // ── Algorithm ──────────────────────────────────────────────────────────────────
 
-// Berger circle: each round has no team appearing twice → courts fill efficiently
 function bergerRounds(teams: Team[]): [Team, Team][][] {
   const list: (Team | null)[] =
     teams.length % 2 === 0 ? [...teams] : [...teams, null]
@@ -102,7 +109,6 @@ function bergerRounds(teams: Team[]): [Team, Team][][] {
   return rounds
 }
 
-// Auto-calculates number of keys for a division
 function calcKeysCount(n: number): number {
   if (n <= 5) return 1
   if (n <= 8) return 2
@@ -112,7 +118,6 @@ function calcKeysCount(n: number): number {
   return Math.ceil(n / 5)
 }
 
-// Assigns auto-generated chave letters to teams based on category+gender
 function assignAutoKeys(teams: Team[]): Team[] {
   const divMap = new Map<string, Team[]>()
   for (const t of teams) {
@@ -142,13 +147,10 @@ function buildMatchups(teams: Team[]): [Team, Team][] {
     if (!groupMap.has(key)) groupMap.set(key, [])
     groupMap.get(key)!.push(t)
   }
-
-  // Berger rounds per key, then interleave across keys so courts stay busy
   const allGroupRounds = Array.from(groupMap.values()).map(bergerRounds)
   const maxR = Math.max(...allGroupRounds.map(r => r.length), 0)
   const maxG = Math.max(...allGroupRounds.flatMap(r => r.map(rd => rd.length)), 0)
   const pairs: [Team, Team][] = []
-
   for (let r = 0; r < maxR; r++) {
     for (let g = 0; g < maxG; g++) {
       for (const groupRounds of allGroupRounds) {
@@ -157,13 +159,11 @@ function buildMatchups(teams: Team[]): [Team, Team][] {
       }
     }
   }
-
   return pairs
 }
 
 function repeatMatchups(base: [Team, Team][], minGames: number): [Team, Team][] {
   if (minGames <= 0 || base.length === 0) return base
-
   const counts = new Map<string, number>()
   for (const [h, a] of base) {
     counts.set(h.id, (counts.get(h.id) ?? 0) + 1)
@@ -171,7 +171,6 @@ function repeatMatchups(base: [Team, Team][], minGames: number): [Team, Team][] 
   }
   const maxPerRound = Math.max(...Array.from(counts.values()), 1)
   const rounds = Math.ceil(minGames / maxPerRound)
-
   const all: [Team, Team][] = []
   for (let r = 0; r < rounds; r++) all.push(...base)
   return all
@@ -179,21 +178,14 @@ function repeatMatchups(base: [Team, Team][], minGames: number): [Team, Team][] 
 
 interface BreakWindow { startMin: number; endMin: number; name: string }
 
-// Advances time past any break that would be invaded (start inside or game end crosses break start)
 function skipBreaks(t: number, duration: number, breaks: BreakWindow[]): number {
   let cur = t
   let changed = true
   while (changed) {
     changed = false
     for (const brk of breaks) {
-      // starts inside break → jump to break end
-      if (cur >= brk.startMin && cur < brk.endMin) {
-        cur = brk.endMin; changed = true; break
-      }
-      // game would invade break start → jump to break end
-      if (cur < brk.startMin && cur + duration > brk.startMin) {
-        cur = brk.endMin; changed = true; break
-      }
+      if (cur >= brk.startMin && cur < brk.endMin) { cur = brk.endMin; changed = true; break }
+      if (cur < brk.startMin && cur + duration > brk.startMin) { cur = brk.endMin; changed = true; break }
     }
   }
   return cur
@@ -206,11 +198,22 @@ function scheduleDay(
   duration: number,
   interval: number,
   restTime: number,
-  breaks: BreakWindow[] = []
-): ScheduledMatch[] {
+  breaks: BreakWindow[] = [],
+  idealMaxMin = Infinity,
+  allowExtra = true,
+): { matches: ScheduledMatch[]; pending: [Team, Team][]; lastStart: number; usedExtraSlot: boolean } {
+  // Hard limit: idealMaxMin + one extra slot, or just idealMaxMin if not allowed
+  // Never exceed 23:59 (1439 min)
+  const MIDNIGHT = 23 * 60 + 59
+  const oneExtraEnd = Math.min(idealMaxMin + duration + interval, MIDNIGHT)
+  const hardLimitMin = allowExtra ? oneExtraEnd : idealMaxMin
+
   const courtEnd = Array(courts).fill(startMin)
   const teamEnd: Record<string, number> = {}
-  const result: ScheduledMatch[] = []
+  const matches: ScheduledMatch[] = []
+  const pending: [Team, Team][] = []
+  let lastStart = 0
+  let usedExtraSlot = false
 
   for (const [home, away] of matchups) {
     const ready = Math.max(teamEnd[home.id] ?? startMin, teamEnd[away.id] ?? startMin)
@@ -220,15 +223,24 @@ function scheduleDay(
       const t = skipBreaks(raw, duration, breaks)
       if (t < bestT) { bestT = t; bestC = c }
     }
+
+    // Over hard limit → pending
+    if (bestT > hardLimitMin) {
+      pending.push([home, away])
+      continue
+    }
+
+    if (bestT > idealMaxMin) usedExtraSlot = true
+
     const end = bestT + duration
     courtEnd[bestC] = end + interval
     teamEnd[home.id] = end + restTime
     teamEnd[away.id] = end + restTime
-    result.push({ court: bestC + 1, startMin: bestT, home, away })
+    matches.push({ court: bestC + 1, startMin: bestT, home, away })
+    lastStart = Math.max(lastStart, bestT)
   }
 
-  // Sort by time first so break rows appear naturally between time blocks
-  return result.sort((a, b) => a.startMin - b.startMin || a.court - b.court)
+  return { matches, pending, lastStart, usedExtraSlot }
 }
 
 function getBreakWindows(config: Config): BreakWindow[] {
@@ -237,39 +249,50 @@ function getBreakWindows(config: Config): BreakWindow[] {
   return [{ startMin: toMin(lb.startTime), endMin: toMin(lb.endTime), name: lb.name }]
 }
 
-function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
+function generateSchedule(teams: Team[], config: Config): {
+  schedules: DateSchedule[]
+  totalPending: number
+  usedExtraSlot: boolean
+} {
   const validDates = config.dates.filter(d => d.date)
-  if (validDates.length === 0) return []
+  if (validDates.length === 0) return { schedules: [], totalPending: 0, usedExtraSlot: false }
 
   const base = buildMatchups(teams)
   const all = repeatMatchups(base, config.minGamesPerTeam)
   const breaks = getBreakWindows(config)
+  const idealMaxMin = toMin(config.idealLastGameTime)
 
-  // Distribute round-robin style across dates
   const n = validDates.length
   const buckets: [Team, Team][][] = Array.from({ length: n }, () => [])
   all.forEach((m, i) => buckets[i % n].push(m))
 
-  return validDates.map((date, i) => ({
-    date,
-    roundIndex: i + 1,
-    matches: scheduleDay(
+  let totalPending = 0
+  let anyExtraSlot = false
+
+  const schedules: DateSchedule[] = validDates.map((date, i) => {
+    const r = scheduleDay(
       buckets[i],
       config.courts,
       toMin(date.startTime || config.startTime),
       config.duration,
       config.interval,
       config.restTime,
-      breaks
-    ),
-  }))
+      breaks,
+      idealMaxMin,
+      config.allowExtraSlot,
+    )
+    totalPending += r.pending.length
+    if (r.usedExtraSlot) anyExtraSlot = true
+    return { date, roundIndex: i + 1, matches: r.matches, pending: r.pending, lastStart: r.lastStart, usedExtraSlot: r.usedExtraSlot }
+  })
+
+  return { schedules, totalPending, usedExtraSlot: anyExtraSlot }
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ROW_COLORS = ['bg-pink-50', 'bg-sky-50', 'bg-emerald-50', 'bg-amber-50', 'bg-violet-50', 'bg-rose-50']
 const today = new Date().toISOString().split('T')[0]
-
 const DEFAULT_BREAK: BreakConfig = { mode: 'yes', name: 'Almoço', startTime: '13:00', endTime: '14:00' }
 
 const DEFAULT_CONFIG: Config = {
@@ -284,6 +307,8 @@ const DEFAULT_CONFIG: Config = {
   regulation: '',
   dates: [{ id: '1', date: today, startTime: '08:30' }],
   lunchBreak: DEFAULT_BREAK,
+  idealLastGameTime: '18:40',
+  allowExtraSlot: true,
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -297,6 +322,9 @@ export default function Home() {
     { id: '3', name: '', group: '', category: '', gender: '' },
   ])
   const [schedules, setSchedules] = useState<DateSchedule[]>([])
+  const [totalPending, setTotalPending] = useState(0)
+  const [globalExtraSlot, setGlobalExtraSlot] = useState(false)
+  const [tableView, setTableView] = useState<TableView>('court')
   const [user, setUser] = useState<{ id: string } | null | undefined>(undefined)
   const [suggestions, setSuggestions] = useState<RegisteredTeam[]>([])
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null)
@@ -310,7 +338,7 @@ export default function Home() {
 
   // ── Config helpers ─────────────────────────────────────────────────────────
 
-  const cfg = (key: keyof Config, val: string | number) =>
+  const cfg = (key: keyof Config, val: string | number | boolean) =>
     setConfig(c => ({ ...c, [key]: val }))
 
   const setBreak = (patch: Partial<BreakConfig>) =>
@@ -368,7 +396,9 @@ export default function Home() {
     if (config.dates.every(d => !d.date)) { alert('Adicione pelo menos uma data.'); return }
 
     const result = generateSchedule(valid, config)
-    setSchedules(result)
+    setSchedules(result.schedules)
+    setTotalPending(result.totalPending)
+    setGlobalExtraSlot(result.usedExtraSlot)
     setStep('table')
     setSaved(false)
 
@@ -542,6 +572,40 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Ideal end time + extra slot */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Horário ideal do último jogo</label>
+                <input type="time"
+                  className="w-full border rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={config.idealLastGameTime}
+                  onChange={e => cfg('idealLastGameTime', e.target.value)}
+                />
+                <p className="text-xs text-gray-400 mt-1">O sistema tenta terminar até esse horário.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Permitir horário extra?</label>
+                <div className="flex gap-3">
+                  {([true, false] as const).map(v => (
+                    <label key={String(v)} className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 cursor-pointer text-sm font-medium transition-colors ${
+                      config.allowExtraSlot === v ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}>
+                      <input type="radio" name="extraSlot" value={String(v)}
+                        checked={config.allowExtraSlot === v}
+                        onChange={() => cfg('allowExtraSlot', v)}
+                        className="sr-only" />
+                      {v ? 'Sim' : 'Não'}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  {config.allowExtraSlot
+                    ? `1 slot extra após ${config.idealLastGameTime} se necessário.`
+                    : 'Parar no horário ideal. Jogos excedentes ficam pendentes.'}
+                </p>
+              </div>
+            </div>
+
             {/* Min games */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -556,7 +620,7 @@ export default function Home() {
                 <p className="text-xs text-gray-400 leading-relaxed">
                   {config.minGamesPerTeam === 0
                     ? 'Padrão: gera um turno completo'
-                    : `Cada time joga ao menos ${config.minGamesPerTeam} partidas no total, distribuídas nas ${config.dates.length} data${config.dates.length !== 1 ? 's' : ''}`}
+                    : `Cada time joga ao menos ${config.minGamesPerTeam} partidas no total`}
                 </p>
               </div>
             </div>
@@ -566,10 +630,10 @@ export default function Home() {
               <label className="block text-sm font-medium text-gray-700 mb-2">Pausa de almoço</label>
               <div className="space-y-2">
                 {([
-                  { v: 'yes' as const, label: 'Sim, bloquear das 13:00 às 14:00', desc: 'Recomendado' },
-                  { v: 'no' as const, label: 'Não, usar horário de almoço para jogos', desc: '' },
-                  { v: 'custom' as const, label: 'Personalizar pausa', desc: '' },
-                ] as const).map(opt => (
+                  { v: 'yes' as const, label: 'Sim, bloquear das 13:00 às 14:00', badge: 'Recomendado' },
+                  { v: 'no' as const, label: 'Não, usar horário de almoço para jogos', badge: '' },
+                  { v: 'custom' as const, label: 'Personalizar pausa', badge: '' },
+                ]).map(opt => (
                   <label key={opt.v} className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
                     config.lunchBreak.mode === opt.v ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
                   }`}>
@@ -579,12 +643,11 @@ export default function Home() {
                       className="mt-0.5 accent-blue-600" />
                     <div>
                       <span className="text-sm font-medium text-gray-800">{opt.label}</span>
-                      {opt.desc && <span className="ml-2 text-xs text-blue-600 font-medium">{opt.desc}</span>}
+                      {opt.badge && <span className="ml-2 text-xs text-blue-600 font-medium">{opt.badge}</span>}
                     </div>
                   </label>
                 ))}
               </div>
-
               {config.lunchBreak.mode === 'custom' && (
                 <div className="mt-3 p-4 bg-gray-50 rounded-xl space-y-3 border border-gray-200">
                   <div>
@@ -622,6 +685,18 @@ export default function Home() {
                 value={config.regulation}
                 onChange={e => cfg('regulation', e.target.value)}
               />
+            </div>
+
+            {/* Summary before proceeding */}
+            <div className="bg-gray-50 rounded-xl p-4 text-xs text-gray-600 space-y-1 border border-gray-200">
+              <p className="font-semibold text-gray-700 mb-1.5">Resumo da configuração</p>
+              <p>🕐 Horário ideal do último jogo: <strong>{config.idealLastGameTime}</strong></p>
+              <p>➕ Horário extra permitido: <strong>{config.allowExtraSlot ? 'Sim (1 slot)' : 'Não'}</strong></p>
+              <p>⏸️ Pausa de almoço:{' '}
+                <strong>
+                  {config.lunchBreak.mode === 'no' ? 'Não' : `Sim, ${config.lunchBreak.startTime} às ${config.lunchBreak.endTime}`}
+                </strong>
+              </p>
             </div>
 
             <button
@@ -676,7 +751,6 @@ export default function Home() {
                           }}
                           onBlur={() => setTimeout(() => { setSuggestions([]); setActiveTeamId(null) }, 200)}
                         />
-                        {/* Autocomplete dropdown */}
                         {activeTeamId === t.id && suggestions.length > 0 && (
                           <div className="absolute left-0 right-2 top-full mt-0.5 z-50 bg-white border rounded-xl shadow-lg overflow-hidden">
                             {suggestions.map(s => (
@@ -757,6 +831,30 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Warnings */}
+            {globalExtraSlot && (
+              <div className="no-print bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 text-sm text-orange-700">
+                ⚠️ Para encaixar todos os jogos, foi necessário usar 1 horário extra após {config.idealLastGameTime}.
+              </div>
+            )}
+            {totalPending > 0 && (
+              <div className="no-print bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+                ⚠️ {totalPending} jogo(s) pendente(s) não couberam nem mesmo com o horário extra. Recomendamos adicionar uma nova data, liberar mais quadras ou reduzir a quantidade de jogos por time.
+              </div>
+            )}
+
+            {/* View toggle */}
+            <div className="no-print flex gap-1 bg-white border border-gray-200 rounded-xl p-1 w-fit">
+              <button onClick={() => setTableView('court')}
+                className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${tableView === 'court' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                Por quadra
+              </button>
+              <button onClick={() => setTableView('time')}
+                className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${tableView === 'time' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                Por horário
+              </button>
+            </div>
+
             <div className="print-card bg-white rounded-2xl shadow p-6">
               {/* Tournament header */}
               <div className="text-center border-b pb-4 mb-6">
@@ -770,23 +868,31 @@ export default function Home() {
 
               {/* One table per rodada */}
               {schedules.map((s, di) => {
-                if (s.matches.length === 0) return null
+                if (s.matches.length === 0 && s.pending.length === 0) return null
+
                 const activeBreaks = getBreakWindows(config)
                 const colCount = 5 + (showGroup ? 1 : 0) + (showCategory ? 1 : 0) + (showGender ? 1 : 0)
 
-                // Build rows: match rows + break rows inserted at the right position
+                // Sort matches according to view mode
+                const sorted = [...s.matches].sort((a, b) =>
+                  tableView === 'court'
+                    ? (a.court - b.court) || (a.startMin - b.startMin)
+                    : (a.startMin - b.startMin) || (a.court - b.court)
+                )
+
+                // Build rows with break inserted once (first gap crossing a break)
                 type Row = { kind: 'match'; m: ScheduledMatch } | { kind: 'break'; brk: BreakWindow }
                 const rows: Row[] = []
-                let breakInserted = new Set<number>()
-                for (let j = 0; j < s.matches.length; j++) {
-                  const m = s.matches[j]
-                  const prev = j > 0 ? s.matches[j - 1] : null
+                const breakShown = new Set<number>()
+                for (let j = 0; j < sorted.length; j++) {
+                  const m = sorted[j]
+                  const prev = j > 0 ? sorted[j - 1] : null
                   for (const brk of activeBreaks) {
-                    if (!breakInserted.has(brk.startMin) &&
-                        (!prev || prev.startMin < brk.endMin) &&
+                    if (!breakShown.has(brk.startMin) &&
+                        (!prev || prev.startMin < brk.startMin) &&
                         m.startMin >= brk.endMin) {
                       rows.push({ kind: 'break', brk })
-                      breakInserted.add(brk.startMin)
+                      breakShown.add(brk.startMin)
                     }
                   }
                   rows.push({ kind: 'match', m })
@@ -798,6 +904,11 @@ export default function Home() {
                       <p className="text-xl font-bold text-gray-800">
                         RODADA {s.roundIndex} — {fmtDate(s.date.date)}
                       </p>
+                      {s.usedExtraSlot && (
+                        <p className="text-xs text-orange-600 mt-0.5">
+                          ⚠️ Esta rodada usa 1 horário extra após {config.idealLastGameTime} para encaixar jogos.
+                        </p>
+                      )}
                     </div>
 
                     <div className="overflow-x-auto">
@@ -842,13 +953,17 @@ export default function Home() {
                         </tbody>
                       </table>
                     </div>
-                    {s.matches.some(m => m.startMin >= 22 * 60) && (
-                      <div className="mt-2 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg text-xs text-orange-700">
-                        ⚠️ Jogos passando das 22h — adicione mais datas ou quadras para distribuir melhor.
+
+                    {/* Pending matches for this date */}
+                    {s.pending.length > 0 && (
+                      <div className="no-print mt-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
+                        ⏳ {s.pending.length} jogo(s) pendente(s) nesta data — sem horário disponível.
                       </div>
                     )}
+
                     <p className="text-xs text-gray-300 text-center mt-1.5">
-                      {s.matches.length} jogo{s.matches.length !== 1 ? 's' : ''}
+                      {s.matches.length} jogo{s.matches.length !== 1 ? 's' : ''} agendados
+                      {s.pending.length > 0 ? ` · ${s.pending.length} pendentes` : ''}
                     </p>
                   </div>
                 )
@@ -862,16 +977,18 @@ export default function Home() {
                 </div>
               )}
 
-              <p className="text-xs text-gray-400 text-center border-t mt-4 pt-3">
-                {config.lunchBreak.mode !== 'no'
-                  ? `✓ Pausa de almoço respeitada: ${config.lunchBreak.startTime} às ${config.lunchBreak.endTime}`
-                  : '— Tabela gerada sem pausa de almoço'}
-              </p>
-              <p className="text-xs text-gray-300 text-center mt-1">
-                {allMatches.length} jogo{allMatches.length !== 1 ? 's' : ''} no total •{' '}
-                {config.courts} quadra{config.courts !== 1 ? 's' : ''} •{' '}
-                {config.duration}min por jogo • TabelaPro
-              </p>
+              <div className="border-t mt-4 pt-3 space-y-1">
+                <p className="text-xs text-gray-400 text-center">
+                  {config.lunchBreak.mode !== 'no'
+                    ? `✓ Pausa de almoço respeitada: ${config.lunchBreak.startTime} às ${config.lunchBreak.endTime}`
+                    : '— Tabela gerada sem pausa de almoço'}
+                </p>
+                <p className="text-xs text-gray-300 text-center">
+                  {allMatches.length} jogo{allMatches.length !== 1 ? 's' : ''} no total •{' '}
+                  {config.courts} quadra{config.courts !== 1 ? 's' : ''} •{' '}
+                  {config.duration}min por jogo • TabelaPro
+                </p>
+              </div>
             </div>
 
             <div className="no-print text-center">
