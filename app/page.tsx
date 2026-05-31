@@ -253,13 +253,85 @@ function scheduleDay(
     lastStart = Math.max(lastStart, bestT)
   }
 
-  const courtStats: CourtStat[] = Array.from({ length: courts }, (_, i) => ({
-    court: i + 1,
-    count: courtCount[i],
-    lastStart: courtLastStart[i],
-  }))
+  // Post-process: try to align end times across courts
+  const balanced = balanceCourtEndTimes(matches, duration, restTime, breaks, hardLimitMin)
+  const courtStats = computeCourtStats(balanced, courts)
+  const finalLastStart = balanced.length > 0 ? Math.max(...balanced.map(m => m.startMin)) : lastStart
 
-  return { matches, pending, lastStart, usedExtraSlot, courtStats }
+  return { matches: balanced, pending, lastStart: finalLastStart, usedExtraSlot, courtStats }
+}
+
+function computeCourtStats(matches: ScheduledMatch[], courts: number): CourtStat[] {
+  return Array.from({ length: courts }, (_, i) => {
+    const cm = matches.filter(m => m.court === i + 1)
+    return {
+      court: i + 1,
+      count: cm.length,
+      lastStart: cm.length > 0 ? Math.max(...cm.map(m => m.startMin)) : 0,
+    }
+  })
+}
+
+/**
+ * Post-processing: tries to push the last match of early-finishing courts
+ * to the global last-start time so all courts end together.
+ * Respects team conflicts, minimum rest, breaks, and hard time limit.
+ */
+function balanceCourtEndTimes(
+  matches: ScheduledMatch[],
+  duration: number,
+  restTime: number,
+  breaks: BreakWindow[],
+  hardLimitMin: number,
+): ScheduledMatch[] {
+  if (matches.length === 0) return matches
+
+  const targetLastStart = Math.max(...matches.map(m => m.startMin))
+  const result = [...matches]
+
+  // Find courts finishing before the global target
+  const courtLastMap = new Map<number, number>()
+  for (const m of result) {
+    courtLastMap.set(m.court, Math.max(courtLastMap.get(m.court) ?? 0, m.startMin))
+  }
+
+  for (const [court, courtLast] of courtLastMap) {
+    if (courtLast >= targetLastStart) continue
+
+    // Find the last match of this court
+    const lastIdx = result.reduce((best, m, idx) =>
+      m.court === court && m.startMin === courtLast ? idx : best, -1)
+    if (lastIdx === -1) continue
+    const lastMatch = result[lastIdx]
+
+    // Candidate new start: the global target, skipping any breaks
+    const newStart = skipBreaks(targetLastStart, duration, breaks)
+    if (newStart > hardLimitMin || newStart === courtLast) continue
+
+    // Check team conflicts at newStart on any other court
+    const homeId = lastMatch.home.id, awayId = lastMatch.away.id
+    const conflict = result.some((m, i) =>
+      i !== lastIdx &&
+      m.startMin === newStart &&
+      (m.home.id === homeId || m.away.id === homeId || m.home.id === awayId || m.away.id === awayId)
+    )
+    if (conflict) continue
+
+    // Check minimum rest for both teams from their previous match
+    let restOk = true
+    for (const tid of [homeId, awayId]) {
+      const prev = result
+        .filter((m, i) => i !== lastIdx && m.startMin < newStart && (m.home.id === tid || m.away.id === tid))
+        .sort((a, b) => b.startMin - a.startMin)[0]
+      if (prev && newStart - (prev.startMin + duration) < restTime) { restOk = false; break }
+    }
+    if (!restOk) continue
+
+    // All checks passed — delay the match to align with the global last slot
+    result[lastIdx] = { ...lastMatch, startMin: newStart }
+  }
+
+  return result
 }
 
 function getBreakWindows(config: Config): BreakWindow[] {
@@ -889,9 +961,6 @@ export default function Home() {
               {schedules.map((s, di) => {
                 if (s.matches.length === 0 && s.pending.length === 0) return null
 
-                const activeBreaks = getBreakWindows(config)
-                const colCount = 5 + (showGroup ? 1 : 0) + (showCategory ? 1 : 0) + (showGender ? 1 : 0)
-
                 // Sort matches according to view mode
                 const sorted = [...s.matches].sort((a, b) =>
                   tableView === 'court'
@@ -899,23 +968,8 @@ export default function Home() {
                     : (a.startMin - b.startMin) || (a.court - b.court)
                 )
 
-                // Build rows with break inserted once (first gap crossing a break)
-                type Row = { kind: 'match'; m: ScheduledMatch } | { kind: 'break'; brk: BreakWindow }
-                const rows: Row[] = []
-                const breakShown = new Set<number>()
-                for (let j = 0; j < sorted.length; j++) {
-                  const m = sorted[j]
-                  const prev = j > 0 ? sorted[j - 1] : null
-                  for (const brk of activeBreaks) {
-                    if (!breakShown.has(brk.startMin) &&
-                        (!prev || prev.startMin < brk.startMin) &&
-                        m.startMin >= brk.endMin) {
-                      rows.push({ kind: 'break', brk })
-                      breakShown.add(brk.startMin)
-                    }
-                  }
-                  rows.push({ kind: 'match', m })
-                }
+                // Build rows — break is a scheduling-only constraint, never shown in the table
+                const rows = sorted.map(m => ({ kind: 'match' as const, m }))
 
                 return (
                   <div key={s.date.id} className={di > 0 ? 'page-break pt-6 mt-6 border-t' : ''}>
@@ -946,15 +1000,6 @@ export default function Home() {
                         </thead>
                         <tbody>
                           {rows.map((row, j) => {
-                            if (row.kind === 'break') {
-                              return (
-                                <tr key={`brk-${j}`} className="bg-orange-50">
-                                  <td colSpan={colCount} className="border border-orange-300 px-3 py-2.5 text-center text-sm font-bold text-orange-700">
-                                    ⏸️ {row.brk.name}: {toTime(row.brk.startMin)} às {toTime(row.brk.endMin)}
-                                  </td>
-                                </tr>
-                              )
-                            }
                             const m = row.m
                             return (
                               <tr key={`m-${j}`} className={rowColor(m)}>
@@ -982,23 +1027,30 @@ export default function Home() {
 
                     {/* Court balance summary */}
                     {s.courtStats.some(c => c.count > 0) && (() => {
-                      const maxC = Math.max(...s.courtStats.map(c => c.count))
-                      const minC = Math.min(...s.courtStats.filter(c => c.count > 0).map(c => c.count))
-                      const balanced = maxC - minC <= 1
+                      const active = s.courtStats.filter(c => c.count > 0)
+                      const maxCount = Math.max(...active.map(c => c.count))
+                      const minCount = Math.min(...active.map(c => c.count))
+                      const maxEnd = Math.max(...active.map(c => c.lastStart))
+                      const minEnd = Math.min(...active.map(c => c.lastStart))
+                      const countBalanced = maxCount - minCount <= 1
+                      const endBalanced = maxEnd - minEnd <= (config.duration + config.interval)
+                      const fullyBalanced = countBalanced && endBalanced
                       return (
                         <div className="no-print mt-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
                           <p className="text-xs font-semibold text-gray-600 mb-2">Resumo das quadras</p>
                           <div className="grid grid-cols-2 gap-1.5">
-                            {s.courtStats.map(cs => cs.count > 0 && (
+                            {active.map(cs => (
                               <div key={cs.court} className="text-xs text-gray-600 flex justify-between bg-white rounded-lg px-2 py-1 border border-gray-100">
                                 <span className="font-medium">Quadra {cs.court}</span>
                                 <span>{cs.count} jogo{cs.count !== 1 ? 's' : ''} · até {toTime(cs.lastStart)}</span>
                               </div>
                             ))}
                           </div>
-                          <p className={`text-xs mt-2 font-medium ${balanced ? 'text-green-600' : 'text-orange-600'}`}>
-                            {balanced
+                          <p className={`text-xs mt-2 font-medium ${fullyBalanced ? 'text-green-600' : countBalanced ? 'text-blue-600' : 'text-orange-600'}`}>
+                            {fullyBalanced
                               ? '✓ Distribuição equilibrada entre quadras e árbitros.'
+                              : countBalanced && !endBalanced
+                              ? '✓ Quantidade equilibrada. O sistema tentou alinhar o término, mas as restrições impediram o encerramento igual.'
                               : '⚠️ Distribuição não ideal. O sistema tentou equilibrar, mas as restrições do torneio impediram uma divisão perfeita.'}
                           </p>
                         </div>
