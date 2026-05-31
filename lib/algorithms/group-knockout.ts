@@ -85,6 +85,8 @@ export function generateGroupKnockout(
     contact_phone: null,
     contact_email: null,
     seed: i + 1,
+    category: null,
+    gender: null,
     created_at: new Date().toISOString(),
   }))
 
