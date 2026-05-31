@@ -6,7 +6,6 @@ import { createClient } from '@/lib/supabase/client'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Format = 'round-robin' | 'groups' | 'knockout'
 type Gender = '' | 'FEM' | 'MAS' | 'MISTO'
 
 interface EventDate {
@@ -23,7 +22,6 @@ interface Config {
   interval: number
   restTime: number
   courts: number
-  format: Format
   minGamesPerTeam: number
   regulation: string
   dates: EventDate[]
@@ -95,24 +93,48 @@ function bergerRounds(teams: Team[]): [Team, Team][][] {
   return rounds
 }
 
-function buildMatchups(teams: Team[], format: Format): [Team, Team][] {
-  if (format === 'knockout') {
-    const pairs: [Team, Team][] = []
-    for (let i = 0; i < teams.length - 1; i += 2)
-      if (teams[i + 1]) pairs.push([teams[i], teams[i + 1]])
-    return pairs
-  }
+// Auto-calculates number of keys for a division
+function calcKeysCount(n: number): number {
+  if (n <= 5) return 1
+  if (n <= 8) return 2
+  if (n <= 12) return 3
+  if (n <= 16) return 4
+  if (n <= 20) return 5
+  return Math.ceil(n / 5)
+}
 
-  const groupMap = new Map<string, Team[]>()
+// Assigns auto-generated chave letters to teams based on category+gender
+function assignAutoKeys(teams: Team[]): Team[] {
+  const divMap = new Map<string, Team[]>()
   for (const t of teams) {
-    const key = format === 'groups'
-      ? `${t.group || 'U'}|${t.category}|${t.gender}`
-      : (t.category || t.gender ? `${t.category}|${t.gender}` : 'all')
+    const key = `${t.category}|${t.gender}`
+    if (!divMap.has(key)) divMap.set(key, [])
+    divMap.get(key)!.push(t)
+  }
+  const assigned = new Map<string, string>()
+  for (const divTeams of divMap.values()) {
+    const keysCount = calcKeysCount(divTeams.length)
+    const sorted = [...divTeams].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    sorted.forEach((team, i) => {
+      const row = Math.floor(i / keysCount)
+      const col = i % keysCount
+      const target = row % 2 === 0 ? col : keysCount - 1 - col
+      assigned.set(team.id, keysCount === 1 ? 'U' : String.fromCharCode(65 + target))
+    })
+  }
+  return teams.map(t => ({ ...t, group: assigned.get(t.id) ?? '' }))
+}
+
+function buildMatchups(teams: Team[]): [Team, Team][] {
+  const keyed = assignAutoKeys(teams)
+  const groupMap = new Map<string, Team[]>()
+  for (const t of keyed) {
+    const key = `${t.category}|${t.gender}|${t.group}`
     if (!groupMap.has(key)) groupMap.set(key, [])
     groupMap.get(key)!.push(t)
   }
 
-  // Berger rounds per group, then interleave across groups so courts stay busy
+  // Berger rounds per key, then interleave across keys so courts stay busy
   const allGroupRounds = Array.from(groupMap.values()).map(bergerRounds)
   const maxR = Math.max(...allGroupRounds.map(r => r.length), 0)
   const maxG = Math.max(...allGroupRounds.flatMap(r => r.map(rd => rd.length)), 0)
@@ -179,7 +201,7 @@ function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
   const validDates = config.dates.filter(d => d.date)
   if (validDates.length === 0) return []
 
-  const base = buildMatchups(teams, config.format)
+  const base = buildMatchups(teams)
   const all = repeatMatchups(base, config.minGamesPerTeam)
 
   // Distribute round-robin style across dates
@@ -214,7 +236,6 @@ const DEFAULT_CONFIG: Config = {
   interval: 10,
   restTime: 70,
   courts: 3,
-  format: 'round-robin',
   minGamesPerTeam: 0,
   regulation: '',
   dates: [{ id: '1', date: today, startTime: '08:30' }],
@@ -473,27 +494,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Format */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Formato</label>
-              <div className="grid grid-cols-3 gap-3">
-                {([
-                  { v: 'round-robin' as const, label: 'Todos contra Todos', desc: 'Cada time enfrenta todos' },
-                  { v: 'groups' as const, label: 'Por Chaves', desc: 'Times em grupos (A, B, C...)' },
-                  { v: 'knockout' as const, label: 'Mata-Mata', desc: 'Eliminatória direta' },
-                ]).map(f => (
-                  <button key={f.v} onClick={() => cfg('format', f.v)}
-                    className={`text-left p-3 rounded-xl border-2 transition-colors ${
-                      config.format === f.v ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="font-semibold text-sm">{f.label}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">{f.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* Min games */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -540,11 +540,7 @@ export default function Home() {
             <div>
               <h2 className="font-bold text-gray-900 text-lg">Times</h2>
               <p className="text-sm text-gray-400 mt-0.5">
-                {config.format === 'groups'
-                  ? 'Preencha a Chave (A, B, C...). Times da mesma chave se enfrentam.'
-                  : config.format === 'round-robin'
-                  ? 'Times com mesma Categoria/Naipe jogam entre si. Sem categoria = todos se enfrentam.'
-                  : 'Pares formados pela ordem: 1°×2°, 3°×4°...'}
+                Times com mesma Categoria e Naipe jogam entre si. O sistema cria as chaves automaticamente.
                 {user && (
                   <span className="ml-1 text-blue-400 text-xs">
                     · Autocomplete ativo —{' '}
@@ -560,7 +556,6 @@ export default function Home() {
                   <tr className="text-left text-xs text-gray-400 border-b">
                     <th className="pb-2 w-7 text-center">#</th>
                     <th className="pb-2 pr-2">Nome *</th>
-                    {config.format === 'groups' && <th className="pb-2 pr-2 w-16 text-center">Chave</th>}
                     <th className="pb-2 pr-2 w-24 text-center">Categoria</th>
                     <th className="pb-2 pr-2 w-20 text-center">Naipe</th>
                     <th className="pb-2 w-6"></th>
@@ -599,16 +594,6 @@ export default function Home() {
                           </div>
                         )}
                       </td>
-                      {config.format === 'groups' && (
-                        <td className="pr-2 py-1.5">
-                          <input
-                            className="w-14 text-center border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            placeholder="A"
-                            value={t.group}
-                            onChange={e => updateTeam(t.id, 'group', e.target.value.toUpperCase())}
-                          />
-                        </td>
-                      )}
                       <td className="pr-2 py-1.5">
                         <input
                           className="w-24 text-center border rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
