@@ -20,12 +20,34 @@ export default async function DashboardPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('full_name')
+    .select('full_name, subscription_status, trial_ends_at')
     .eq('id', user.id)
     .single()
 
+  const daysLeft = profile?.trial_ends_at
+    ? Math.max(0, Math.ceil((new Date(profile.trial_ends_at).getTime() - Date.now()) / 86400000))
+    : null
+  const trialExpired = profile?.subscription_status === 'trial' && daysLeft !== null && daysLeft <= 0
+
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Trial / subscription banner */}
+      {profile?.subscription_status !== 'active' && daysLeft !== null && (
+        <div className={`px-4 py-2.5 text-sm text-center font-medium ${
+          trialExpired ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-900'
+        }`}>
+          {trialExpired ? (
+            <>Seu período de teste expirou.{' '}
+              <Link href="/plano" className="underline font-bold">Assine agora por R$ 29,90/mês →</Link>
+            </>
+          ) : (
+            <>⏳ Teste grátis: {daysLeft} dia{daysLeft !== 1 ? 's' : ''} restante{daysLeft !== 1 ? 's' : ''}.{' '}
+              <Link href="/plano" className="underline">Ver plano →</Link>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Navbar */}
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">

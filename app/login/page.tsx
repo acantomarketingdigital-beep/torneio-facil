@@ -36,19 +36,19 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 px-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 px-4">
+      <div className="w-full max-w-sm">
+        {/* Logo */}
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
             <span className="text-3xl">🏆</span>
             <span className="font-bold text-2xl">TabelaPro</span>
           </Link>
-          <h1 className="text-2xl font-bold mt-6 text-gray-900">Entrar na conta</h1>
-          <p className="text-gray-500 mt-1 text-sm">Gerencie seus campeonatos</p>
+          <p className="text-gray-500 mt-3 text-sm">Entre para acessar seus campeonatos</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg p-8">
-          <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="bg-white rounded-2xl shadow-lg p-7">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
               <input
@@ -60,9 +60,10 @@ export default function LoginPage() {
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-sm font-medium text-gray-700">Senha</label>
+                <label className="text-sm font-medium text-gray-700">Senha</label>
                 <Link href="/forgot-password" className="text-xs text-blue-600 hover:underline">
                   Esqueceu a senha?
                 </Link>
@@ -74,13 +75,13 @@ export default function LoginPage() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full px-4 py-3 pr-12 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="w-full px-4 py-3 pr-11 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
                   tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
                 >
                   {showPassword ? (
                     <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -105,19 +106,27 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+              className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 mt-1"
             >
               {loading ? 'Entrando...' : 'Entrar'}
             </button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-gray-500">
+          <div className="mt-5 text-center text-sm text-gray-500">
             Não tem conta?{' '}
             <Link href="/register" className="text-blue-600 font-medium hover:underline">
-              Criar gratuitamente
+              Teste grátis por 10 dias →
             </Link>
           </div>
         </div>
+
+        {/* Support */}
+        <p className="text-center text-xs text-gray-400 mt-6">
+          Precisa de ajuda?{' '}
+          <a href="mailto:suporte.tabelapro@gmail.com" className="text-blue-500 hover:underline">
+            suporte.tabelapro@gmail.com
+          </a>
+        </p>
       </div>
     </div>
   )

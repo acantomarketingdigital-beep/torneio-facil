@@ -39,7 +39,6 @@ export default function RegisterPage() {
       return
     }
 
-    // Se confirmação de email estiver ativa, mostra aviso. Senão, redireciona.
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       router.push('/')
@@ -49,34 +48,52 @@ export default function RegisterPage() {
     }
   }
 
+  if (checkEmail) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 px-4">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-8">
+            <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
+              <span className="text-3xl">🏆</span>
+              <span className="font-bold text-2xl">TabelaPro</span>
+            </Link>
+          </div>
+          <div className="bg-white rounded-2xl shadow-lg p-8 text-center space-y-4">
+            <div className="text-5xl">📧</div>
+            <h2 className="text-lg font-bold text-gray-900">Confirme seu email</h2>
+            <p className="text-sm text-gray-500">
+              Enviamos um link para <strong>{email}</strong>.<br />
+              Clique no link para ativar sua conta.
+            </p>
+            <p className="text-xs text-gray-400">Não recebeu? Verifique o spam.</p>
+            <Link href="/login" className="block text-sm text-blue-600 hover:underline font-medium">
+              Ir para o login →
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 px-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100 px-4">
+      <div className="w-full max-w-sm">
+        {/* Logo */}
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
             <span className="text-3xl">🏆</span>
             <span className="font-bold text-2xl">TabelaPro</span>
           </Link>
-          <h1 className="text-2xl font-bold mt-6 text-gray-900">Criar conta gratuita</h1>
-          <p className="text-gray-500 mt-1 text-sm">Comece a criar campeonatos agora</p>
+          <div className="mt-3 inline-flex items-center gap-1.5 bg-green-100 text-green-700 text-xs font-medium px-3 py-1 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+            10 dias grátis · Sem cartão agora
+          </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg p-8">
-          {checkEmail ? (
-            <div className="text-center space-y-4">
-              <div className="text-5xl">📧</div>
-              <h2 className="text-lg font-semibold text-gray-900">Confirme seu email</h2>
-              <p className="text-sm text-gray-500">
-                Enviamos um link de confirmação para <strong>{email}</strong>.<br />
-                Clique no link para ativar sua conta e poder entrar.
-              </p>
-              <p className="text-xs text-gray-400">Não recebeu? Verifique o spam.</p>
-              <Link href="/login" className="block text-sm text-blue-600 hover:underline font-medium">
-                Ir para o login →
-              </Link>
-            </div>
-          ) : (
-          <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="bg-white rounded-2xl shadow-lg p-7">
+          <h1 className="text-xl font-bold text-gray-900 mb-5">Criar conta gratuita</h1>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Nome completo</label>
               <input
@@ -88,6 +105,7 @@ export default function RegisterPage() {
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
               <input
@@ -99,6 +117,7 @@ export default function RegisterPage() {
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Senha</label>
               <div className="relative">
@@ -108,13 +127,13 @@ export default function RegisterPage() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="Mínimo 6 caracteres"
-                  className="w-full px-4 py-3 pr-12 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  className="w-full px-4 py-3 pr-11 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
                   tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
                 >
                   {showPassword ? (
                     <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -128,7 +147,6 @@ export default function RegisterPage() {
                   )}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mt-1">Mínimo 6 caracteres</p>
             </div>
 
             {error && (
@@ -142,20 +160,24 @@ export default function RegisterPage() {
               disabled={loading}
               className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
-              {loading ? 'Criando conta...' : 'Criar conta'}
+              {loading ? 'Criando conta...' : 'Começar teste grátis →'}
             </button>
           </form>
 
-          )}
-          {!checkEmail && (
-          <div className="mt-6 text-center text-sm text-gray-500">
+          <div className="mt-5 text-center text-sm text-gray-500">
             Já tem conta?{' '}
             <Link href="/login" className="text-blue-600 font-medium hover:underline">
               Entrar
             </Link>
           </div>
-          )}
         </div>
+
+        <p className="text-center text-xs text-gray-400 mt-6">
+          Precisa de ajuda?{' '}
+          <a href="mailto:suporte.tabelapro@gmail.com" className="text-blue-500 hover:underline">
+            suporte.tabelapro@gmail.com
+          </a>
+        </p>
       </div>
     </div>
   )
