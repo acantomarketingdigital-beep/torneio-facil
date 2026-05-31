@@ -61,6 +61,12 @@ interface ScheduledMatch {
   away: Team
 }
 
+interface CourtStat {
+  court: number
+  count: number
+  lastStart: number
+}
+
 interface DateSchedule {
   date: EventDate
   matches: ScheduledMatch[]
@@ -68,6 +74,7 @@ interface DateSchedule {
   roundIndex: number
   lastStart: number
   usedExtraSlot: boolean
+  courtStats: CourtStat[]
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
@@ -201,14 +208,15 @@ function scheduleDay(
   breaks: BreakWindow[] = [],
   idealMaxMin = Infinity,
   allowExtra = true,
-): { matches: ScheduledMatch[]; pending: [Team, Team][]; lastStart: number; usedExtraSlot: boolean } {
-  // Hard limit: idealMaxMin + one extra slot, or just idealMaxMin if not allowed
-  // Never exceed 23:59 (1439 min)
+): { matches: ScheduledMatch[]; pending: [Team, Team][]; lastStart: number; usedExtraSlot: boolean; courtStats: CourtStat[] } {
   const MIDNIGHT = 23 * 60 + 59
   const oneExtraEnd = Math.min(idealMaxMin + duration + interval, MIDNIGHT)
   const hardLimitMin = allowExtra ? oneExtraEnd : idealMaxMin
 
   const courtEnd = Array(courts).fill(startMin)
+  // Per-court tracking for balance
+  const courtCount = Array(courts).fill(0)
+  const courtLastStart = Array(courts).fill(0)
   const teamEnd: Record<string, number> = {}
   const matches: ScheduledMatch[] = []
   const pending: [Team, Team][] = []
@@ -217,14 +225,17 @@ function scheduleDay(
 
   for (const [home, away] of matchups) {
     const ready = Math.max(teamEnd[home.id] ?? startMin, teamEnd[away.id] ?? startMin)
-    let bestC = 0, bestT = Infinity
+
+    // Select court: primary = fewest matches (balance), secondary = earliest available time
+    let bestC = 0, bestT = Infinity, bestCount = Infinity
     for (let c = 0; c < courts; c++) {
       const raw = Math.max(courtEnd[c], ready)
       const t = skipBreaks(raw, duration, breaks)
-      if (t < bestT) { bestT = t; bestC = c }
+      if (courtCount[c] < bestCount || (courtCount[c] === bestCount && t < bestT)) {
+        bestT = t; bestC = c; bestCount = courtCount[c]
+      }
     }
 
-    // Over hard limit → pending
     if (bestT > hardLimitMin) {
       pending.push([home, away])
       continue
@@ -234,13 +245,21 @@ function scheduleDay(
 
     const end = bestT + duration
     courtEnd[bestC] = end + interval
+    courtCount[bestC]++
+    courtLastStart[bestC] = bestT
     teamEnd[home.id] = end + restTime
     teamEnd[away.id] = end + restTime
     matches.push({ court: bestC + 1, startMin: bestT, home, away })
     lastStart = Math.max(lastStart, bestT)
   }
 
-  return { matches, pending, lastStart, usedExtraSlot }
+  const courtStats: CourtStat[] = Array.from({ length: courts }, (_, i) => ({
+    court: i + 1,
+    count: courtCount[i],
+    lastStart: courtLastStart[i],
+  }))
+
+  return { matches, pending, lastStart, usedExtraSlot, courtStats }
 }
 
 function getBreakWindows(config: Config): BreakWindow[] {
@@ -283,7 +302,7 @@ function generateSchedule(teams: Team[], config: Config): {
     )
     totalPending += r.pending.length
     if (r.usedExtraSlot) anyExtraSlot = true
-    return { date, roundIndex: i + 1, matches: r.matches, pending: r.pending, lastStart: r.lastStart, usedExtraSlot: r.usedExtraSlot }
+    return { date, roundIndex: i + 1, matches: r.matches, pending: r.pending, lastStart: r.lastStart, usedExtraSlot: r.usedExtraSlot, courtStats: r.courtStats }
   })
 
   return { schedules, totalPending, usedExtraSlot: anyExtraSlot }
@@ -960,6 +979,31 @@ export default function Home() {
                         ⏳ {s.pending.length} jogo(s) pendente(s) nesta data — sem horário disponível.
                       </div>
                     )}
+
+                    {/* Court balance summary */}
+                    {s.courtStats.some(c => c.count > 0) && (() => {
+                      const maxC = Math.max(...s.courtStats.map(c => c.count))
+                      const minC = Math.min(...s.courtStats.filter(c => c.count > 0).map(c => c.count))
+                      const balanced = maxC - minC <= 1
+                      return (
+                        <div className="no-print mt-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
+                          <p className="text-xs font-semibold text-gray-600 mb-2">Resumo das quadras</p>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {s.courtStats.map(cs => cs.count > 0 && (
+                              <div key={cs.court} className="text-xs text-gray-600 flex justify-between bg-white rounded-lg px-2 py-1 border border-gray-100">
+                                <span className="font-medium">Quadra {cs.court}</span>
+                                <span>{cs.count} jogo{cs.count !== 1 ? 's' : ''} · até {toTime(cs.lastStart)}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <p className={`text-xs mt-2 font-medium ${balanced ? 'text-green-600' : 'text-orange-600'}`}>
+                            {balanced
+                              ? '✓ Distribuição equilibrada entre quadras e árbitros.'
+                              : '⚠️ Distribuição não ideal. O sistema tentou equilibrar, mas as restrições do torneio impediram uma divisão perfeita.'}
+                          </p>
+                        </div>
+                      )
+                    })()}
 
                     <p className="text-xs text-gray-300 text-center mt-1.5">
                       {s.matches.length} jogo{s.matches.length !== 1 ? 's' : ''} agendados
