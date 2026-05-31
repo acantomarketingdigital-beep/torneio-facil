@@ -204,7 +204,7 @@ export default function Home() {
   const [suggestions, setSuggestions] = useState<RegisteredTeam[]>([])
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     const supabase = createClient()
