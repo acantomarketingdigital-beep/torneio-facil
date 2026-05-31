@@ -64,6 +64,14 @@ export function scheduleMatches(
     }
   }
 
+  // Sort slots by date+time so all courts at 08:30 come before all courts at 09:40, etc.
+  allSlots.sort((a, b) => {
+    const da = `${a.date}T${a.time}`
+    const db = `${b.date}T${b.time}`
+    if (da !== db) return da < db ? -1 : 1
+    return a.venueName < b.venueName ? -1 : a.venueName > b.venueName ? 1 : 0
+  })
+
   // Track usage
   const venueUsed = new Map<string, Set<string>>() // "venueId-date-time" -> used
   const teamDayCount = new Map<string, number>() // "teamId-date" -> count
