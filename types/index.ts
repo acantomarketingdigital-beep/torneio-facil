@@ -1,4 +1,4 @@
-export type ChampionshipFormat = 'round_robin' | 'knockout' | 'group_knockout' | 'custom'
+export type ChampionshipFormat = 'round_robin' | 'knockout' | 'group_knockout' | 'custom' | 'auto'
 export type ChampionshipStatus = 'draft' | 'published' | 'in_progress' | 'finished'
 export type MatchStatus = 'scheduled' | 'in_progress' | 'finished' | 'cancelled' | 'walkover'
 export type MatchPhase = 'group' | 'round_robin' | 'round_of_16' | 'quarter_final' | 'semi_final' | 'third_place' | 'final'
@@ -39,8 +39,23 @@ export interface Championship {
   teams_advance_per_group: number | null
   is_public: boolean
   regulation: string | null
+  courts_count: number
+  default_start_time: string
+  default_end_time: string
+  safety_margin_minutes: number
   created_at: string
   updated_at: string
+}
+
+export interface ChampionshipBreak {
+  id: string
+  championship_id: string
+  name: string
+  start_time: string
+  end_time: string
+  applies_to_all_dates: boolean
+  slot_date: string | null
+  created_at: string
 }
 
 export interface Team {
@@ -54,6 +69,8 @@ export interface Team {
   contact_phone: string | null
   contact_email: string | null
   seed: number | null
+  category: string | null
+  gender: string | null
   created_at: string
 }
 

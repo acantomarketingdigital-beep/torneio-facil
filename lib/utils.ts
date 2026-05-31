@@ -56,6 +56,7 @@ export const PHASE_LABELS: Record<string, string> = {
 }
 
 export const FORMAT_LABELS: Record<string, string> = {
+  auto: 'Automático Inteligente',
   round_robin: 'Todos contra Todos',
   knockout: 'Mata-Mata',
   group_knockout: 'Grupos + Mata-Mata',

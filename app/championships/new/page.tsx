@@ -4,16 +4,6 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import type { ChampionshipFormat } from '@/types'
-
-const SPORTS = ['Futebol', 'Futsal', 'Basquete', 'Vôlei', 'Handebol', 'Tênis', 'Beach Tennis', 'Outro']
-
-const FORMATS: { value: ChampionshipFormat; label: string; desc: string }[] = [
-  { value: 'round_robin', label: 'Todos contra Todos', desc: 'Cada time enfrenta todos os outros uma vez. Classificação por pontos.' },
-  { value: 'knockout', label: 'Mata-Mata', desc: 'Eliminatórias diretas. O perdedor é eliminado.' },
-  { value: 'group_knockout', label: 'Grupos + Mata-Mata', desc: 'Fase de grupos seguida de mata-mata com os melhores.' },
-  { value: 'custom', label: 'Personalizado (X Jogos)', desc: 'Cada time joga uma quantidade definida de partidas.' },
-]
 
 export default function NewChampionshipPage() {
   const router = useRouter()
@@ -23,23 +13,17 @@ export default function NewChampionshipPage() {
 
   const [form, setForm] = useState({
     name: '',
-    sport: 'Futebol',
-    format: 'round_robin' as ChampionshipFormat,
-    description: '',
     location: '',
     start_date: '',
     end_date: '',
-    game_duration: 60,
-    interval_between_games: 15,
-    min_rest_minutes: 120,
-    max_games_per_day_per_team: 2,
-    custom_games_per_team: 3,
-    groups_count: 4,
-    teams_advance_per_group: 2,
-    points_win: 3,
-    points_draw: 1,
-    points_loss: 0,
-    allow_draws: true,
+    default_start_time: '08:00',
+    default_end_time: '22:00',
+    courts_count: 2,
+    game_duration: 70,
+    interval_between_games: 10,
+    min_rest_minutes: 80,
+    min_games_per_team: 0,
+    regulation: '',
     is_public: true,
   })
 
@@ -63,131 +47,165 @@ export default function NewChampionshipPage() {
       .trim()
       + '-' + Math.floor(Math.random() * 9000 + 1000)
 
-    const { data, error } = await supabase.from('championships').insert({
+    const { data, error: insertErr } = await supabase.from('championships').insert({
       owner_id: user.id,
       name: form.name,
-      sport: form.sport,
-      format: form.format,
-      description: form.description || null,
+      sport: 'Vôlei',
+      format: 'auto',
+      description: null,
       location: form.location || null,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
       game_duration: form.game_duration,
       interval_between_games: form.interval_between_games,
       min_rest_minutes: form.min_rest_minutes,
-      max_games_per_day_per_team: form.max_games_per_day_per_team,
-      custom_games_per_team: form.custom_games_per_team,
-      groups_count: form.groups_count,
-      teams_advance_per_group: form.teams_advance_per_group,
-      points_win: form.points_win,
-      points_draw: form.points_draw,
-      points_loss: form.points_loss,
-      allow_draws: form.allow_draws,
+      max_games_per_day_per_team: 99,
+      custom_games_per_team: form.min_games_per_team,
+      groups_count: 4,
+      teams_advance_per_group: 2,
+      points_win: 3,
+      points_draw: 1,
+      points_loss: 0,
+      allow_draws: false,
       is_public: form.is_public,
+      regulation: form.regulation || null,
+      courts_count: form.courts_count,
+      default_start_time: form.default_start_time,
+      default_end_time: form.default_end_time,
       slug,
     }).select('id').single()
 
-    if (error) { setError(error.message); setLoading(false); return }
+    if (insertErr) { setError(insertErr.message); setLoading(false); return }
+
+    // Auto-create venues (Quadra 1, Quadra 2, ...)
+    if (form.courts_count > 0) {
+      const venues = Array.from({ length: form.courts_count }, (_, i) => ({
+        championship_id: data.id,
+        name: `Quadra ${i + 1}`,
+        is_active: true,
+      }))
+      await supabase.from('venues').insert(venues)
+    }
+
+    // Auto-create slot for start_date if provided
+    if (form.start_date) {
+      await supabase.from('available_slots').insert({
+        championship_id: data.id,
+        slot_date: form.start_date,
+        start_time: form.default_start_time,
+        end_time: form.default_end_time,
+        venue_id: null,
+      })
+    }
 
     router.push(`/championships/${data.id}/teams`)
   }
 
-  const Input = ({ label, id, ...props }: { label: string; id: string } & React.InputHTMLAttributes<HTMLInputElement>) => (
-    <div>
-      <label htmlFor={id} className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>
-      <input id={id} {...props} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
-    </div>
-  )
+  const labelClass = 'block text-sm font-medium text-gray-700 mb-1.5'
+  const inputClass = 'w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm'
 
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
           <Link href="/dashboard" className="text-gray-400 hover:text-gray-600 text-sm">← Dashboard</Link>
           <span className="text-gray-300">/</span>
-          <span className="text-sm font-medium">Novo Campeonato</span>
+          <span className="text-sm font-medium">Novo Torneio</span>
         </div>
       </nav>
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Novo Campeonato</h1>
+      <main className="max-w-2xl mx-auto px-4 py-8">
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Novo Torneio</h1>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Informações básicas */}
+        <form onSubmit={handleSubmit} className="space-y-5">
+
+          {/* Identificação */}
           <section className="bg-white rounded-2xl p-6 border border-gray-200 space-y-4">
-            <h2 className="font-semibold text-gray-900">Informações básicas</h2>
-            <Input label="Nome do campeonato *" id="name" required value={form.name} onChange={e => update('name', e.target.value)} placeholder="Ex: Copa Amigos 2025" />
+            <h2 className="font-semibold text-gray-900">Identificação</h2>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Esporte</label>
-              <select value={form.sport} onChange={e => update('sport', e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
-                {SPORTS.map(s => <option key={s}>{s}</option>)}
-              </select>
+              <label className={labelClass}>Nome do torneio *</label>
+              <input required value={form.name} onChange={e => update('name', e.target.value)}
+                placeholder="Ex: Copa Cruzeta de Vôlei 2026" className={inputClass} autoFocus />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Descrição</label>
-              <textarea value={form.description} onChange={e => update('description', e.target.value)} rows={2} placeholder="Descrição opcional..." className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none" />
+              <label className={labelClass}>Local</label>
+              <input value={form.location} onChange={e => update('location', e.target.value)}
+                placeholder="Ex: Ginásio Municipal" className={inputClass} />
             </div>
-            <Input label="Local" id="location" value={form.location} onChange={e => update('location', e.target.value)} placeholder="Ex: Ginásio Municipal" />
             <div className="grid grid-cols-2 gap-4">
-              <Input label="Data de início" id="start" type="date" value={form.start_date} onChange={e => update('start_date', e.target.value)} />
-              <Input label="Data de fim" id="end" type="date" value={form.end_date} onChange={e => update('end_date', e.target.value)} />
-            </div>
-          </section>
-
-          {/* Formato */}
-          <section className="bg-white rounded-2xl p-6 border border-gray-200 space-y-3">
-            <h2 className="font-semibold text-gray-900">Formato do campeonato</h2>
-            <div className="grid sm:grid-cols-2 gap-3">
-              {FORMATS.map(f => (
-                <button
-                  key={f.value}
-                  type="button"
-                  onClick={() => update('format', f.value)}
-                  className={`text-left p-4 rounded-xl border-2 transition-all ${form.format === f.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}
-                >
-                  <div className="font-medium text-sm text-gray-900">{f.label}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{f.desc}</div>
-                </button>
-              ))}
-            </div>
-
-            {form.format === 'group_knockout' && (
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <Input label="Nº de grupos" id="gc" type="number" min={2} max={16} value={form.groups_count} onChange={e => update('groups_count', Number(e.target.value))} />
-                <Input label="Times que avançam por grupo" id="ta" type="number" min={1} max={8} value={form.teams_advance_per_group} onChange={e => update('teams_advance_per_group', Number(e.target.value))} />
+              <div>
+                <label className={labelClass}>Data de início *</label>
+                <input required type="date" value={form.start_date} onChange={e => update('start_date', e.target.value)} className={inputClass} />
               </div>
-            )}
-            {form.format === 'custom' && (
-              <Input label="Jogos por time" id="cg" type="number" min={1} max={20} value={form.custom_games_per_team} onChange={e => update('custom_games_per_team', Number(e.target.value))} />
-            )}
+              <div>
+                <label className={labelClass}>Data de fim</label>
+                <input type="date" value={form.end_date} onChange={e => update('end_date', e.target.value)} className={inputClass} />
+              </div>
+            </div>
           </section>
 
-          {/* Configurações de tempo */}
+          {/* Agenda da rodada */}
           <section className="bg-white rounded-2xl p-6 border border-gray-200 space-y-4">
-            <h2 className="font-semibold text-gray-900">Configurações de tempo</h2>
+            <h2 className="font-semibold text-gray-900">Agenda da rodada</h2>
+            <p className="text-xs text-gray-400">Esses valores são usados para gerar os horários automaticamente.</p>
             <div className="grid grid-cols-2 gap-4">
-              <Input label="Duração do jogo (min)" id="gd" type="number" min={10} value={form.game_duration} onChange={e => update('game_duration', Number(e.target.value))} />
-              <Input label="Intervalo entre jogos (min)" id="ig" type="number" min={0} value={form.interval_between_games} onChange={e => update('interval_between_games', Number(e.target.value))} />
-              <Input label="Descanso mínimo (min)" id="mr" type="number" min={0} value={form.min_rest_minutes} onChange={e => update('min_rest_minutes', Number(e.target.value))} />
-              <Input label="Máx. jogos por dia por time" id="mg" type="number" min={1} max={10} value={form.max_games_per_day_per_team} onChange={e => update('max_games_per_day_per_team', Number(e.target.value))} />
+              <div>
+                <label className={labelClass}>Horário inicial *</label>
+                <input required type="time" value={form.default_start_time} onChange={e => update('default_start_time', e.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className={labelClass}>Horário final *</label>
+                <input required type="time" value={form.default_end_time} onChange={e => update('default_end_time', e.target.value)} className={inputClass} />
+              </div>
+            </div>
+            <div>
+              <label className={labelClass}>Quantidade de quadras</label>
+              <input type="number" min={1} max={20} value={form.courts_count}
+                onChange={e => update('courts_count', Number(e.target.value))} className={inputClass} />
+              <p className="text-xs text-gray-400 mt-1">As quadras serão criadas automaticamente (Quadra 1, Quadra 2…)</p>
             </div>
           </section>
 
-          {/* Pontuação */}
+          {/* Regras dos jogos */}
           <section className="bg-white rounded-2xl p-6 border border-gray-200 space-y-4">
-            <h2 className="font-semibold text-gray-900">Pontuação e regras</h2>
-            <div className="grid grid-cols-3 gap-4">
-              <Input label="Pontos por vitória" id="pw" type="number" min={0} value={form.points_win} onChange={e => update('points_win', Number(e.target.value))} />
-              <Input label="Pontos por empate" id="pd" type="number" min={0} value={form.points_draw} onChange={e => update('points_draw', Number(e.target.value))} />
-              <Input label="Pontos por derrota" id="pl" type="number" min={0} value={form.points_loss} onChange={e => update('points_loss', Number(e.target.value))} />
+            <h2 className="font-semibold text-gray-900">Regras dos jogos</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Duração do jogo (min)</label>
+                <input type="number" min={10} value={form.game_duration}
+                  onChange={e => update('game_duration', Number(e.target.value))} className={inputClass} />
+              </div>
+              <div>
+                <label className={labelClass}>Intervalo entre jogos (min)</label>
+                <input type="number" min={0} value={form.interval_between_games}
+                  onChange={e => update('interval_between_games', Number(e.target.value))} className={inputClass} />
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <input type="checkbox" id="draws" checked={form.allow_draws} onChange={e => update('allow_draws', e.target.checked)} className="w-4 h-4 text-blue-600 rounded" />
-              <label htmlFor="draws" className="text-sm text-gray-700">Permitir empates</label>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Descanso mínimo por time (min)</label>
+                <input type="number" min={0} value={form.min_rest_minutes}
+                  onChange={e => update('min_rest_minutes', Number(e.target.value))} className={inputClass} />
+              </div>
+              <div>
+                <label className={labelClass}>Mínimo de jogos por time</label>
+                <input type="number" min={0} max={20} value={form.min_games_per_team}
+                  onChange={e => update('min_games_per_team', Number(e.target.value))} className={inputClass} />
+                <p className="text-xs text-gray-400 mt-1">0 = todos contra todos na chave</p>
+              </div>
             </div>
+          </section>
+
+          {/* Regulamento */}
+          <section className="bg-white rounded-2xl p-6 border border-gray-200 space-y-3">
+            <h2 className="font-semibold text-gray-900">Regulamento (opcional)</h2>
+            <textarea value={form.regulation} onChange={e => update('regulation', e.target.value)}
+              rows={4} placeholder="Descreva as regras e regulamento do torneio..."
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none" />
             <div className="flex items-center gap-3">
-              <input type="checkbox" id="public" checked={form.is_public} onChange={e => update('is_public', e.target.checked)} className="w-4 h-4 text-blue-600 rounded" />
-              <label htmlFor="public" className="text-sm text-gray-700">Página pública do campeonato (acessível sem login)</label>
+              <input type="checkbox" id="public" checked={form.is_public} onChange={e => update('is_public', e.target.checked)}
+                className="w-4 h-4 text-blue-600 rounded" />
+              <label htmlFor="public" className="text-sm text-gray-700">Página pública do torneio (acessível sem login)</label>
             </div>
           </section>
 
@@ -195,11 +213,12 @@ export default function NewChampionshipPage() {
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{error}</div>
           )}
 
-          <div className="flex gap-3">
-            <Link href="/dashboard" className="flex-1 py-3 text-center border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-colors text-sm">
+          <div className="flex gap-3 pb-8">
+            <Link href="/dashboard" className="flex-1 py-3 text-center border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 text-sm">
               Cancelar
             </Link>
-            <button type="submit" disabled={loading} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 text-sm">
+            <button type="submit" disabled={loading || !form.name || !form.start_date}
+              className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50 text-sm">
               {loading ? 'Criando...' : 'Criar e adicionar times →'}
             </button>
           </div>

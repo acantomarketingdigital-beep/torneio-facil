@@ -1,4 +1,4 @@
-import { type AvailableSlot, type Venue, type GeneratedMatch, type ScheduleConstraints } from '@/types'
+import { type AvailableSlot, type Venue, type GeneratedMatch, type ScheduleConstraints, type ChampionshipBreak } from '@/types'
 import { parseISO, addMinutes, format, isBefore, isAfter, differenceInMinutes } from 'date-fns'
 
 interface TimeSlot {
@@ -9,28 +9,18 @@ interface TimeSlot {
   slotEndTime: string
 }
 
-interface TeamScheduleEntry {
-  datetime: Date
-  endDatetime: Date
-}
-
-/**
- * Assigns time slots to generated matches respecting:
- * - No team plays two games at the same time
- * - No venue has two games at the same time
- * - Minimum rest between games for the same team
- * - Maximum games per day per team
- * - Attempts to avoid consecutive games for the same team
- */
 export function scheduleMatches(
   matches: GeneratedMatch[],
   slots: AvailableSlot[],
   venues: Venue[],
-  constraints: ScheduleConstraints
+  constraints: ScheduleConstraints,
+  breaks: ChampionshipBreak[] = [],
+  safetyMarginMinutes = 0
 ): GeneratedMatch[] {
   const { gameDuration, intervalBetweenGames, minRestMinutes, maxGamesPerDayPerTeam } = constraints
 
-  const totalSlotDuration = gameDuration + intervalBetweenGames
+  // totalSlotDuration includes safety margin so consecutive slots already have breathing room
+  const totalSlotDuration = gameDuration + safetyMarginMinutes + intervalBetweenGames
 
   // Build available time slots per venue
   const allSlots: TimeSlot[] = []
@@ -46,18 +36,51 @@ export function scheduleMatches(
       ? venues.filter(v => v.id === slot.venue_id && v.is_active)
       : venues.filter(v => v.is_active)
 
+    // Get breaks that apply to this specific date
+    const dateBreaks = breaks.filter(b =>
+      b.applies_to_all_dates || b.slot_date === slot.slot_date
+    ).map(b => ({
+      start: parseISO(`${slot.slot_date}T${b.start_time}`),
+      end: parseISO(`${slot.slot_date}T${b.end_time}`),
+      name: b.name,
+    }))
+
     for (const venue of applicableVenues) {
       const start = parseISO(`${slot.slot_date}T${slot.start_time}`)
       const end = parseISO(`${slot.slot_date}T${slot.end_time}`)
 
       let current = start
-      while (isBefore(addMinutes(current, gameDuration), end) || differenceInMinutes(end, current) >= gameDuration) {
+      while (differenceInMinutes(end, current) >= gameDuration) {
+        const gameEnd = addMinutes(current, gameDuration)
+        const gameEndWithMargin = addMinutes(current, gameDuration + safetyMarginMinutes)
+
+        // Never generate slots that cross midnight
+        if (format(gameEnd, 'yyyy-MM-dd') !== slot.slot_date) break
+
+        // Check if current time is inside any break → jump past it
+        let jumpedToBreakEnd = false
+        for (const brk of dateBreaks) {
+          // If the current start falls inside a break, jump to break end
+          if (!isBefore(current, brk.start) && isBefore(current, brk.end)) {
+            current = brk.end
+            jumpedToBreakEnd = true
+            break
+          }
+          // If the game end (with margin) overlaps into a break start, jump past break
+          if (isBefore(current, brk.start) && isAfter(gameEndWithMargin, brk.start)) {
+            current = brk.end
+            jumpedToBreakEnd = true
+            break
+          }
+        }
+        if (jumpedToBreakEnd) continue
+
         allSlots.push({
           date: slot.slot_date,
           time: format(current, 'HH:mm'),
           venueId: venue.id,
           venueName: venue.name,
-          slotEndTime: format(addMinutes(current, gameDuration), 'HH:mm'),
+          slotEndTime: format(gameEnd, 'HH:mm'),
         })
         current = addMinutes(current, totalSlotDuration)
       }
@@ -73,9 +96,9 @@ export function scheduleMatches(
   })
 
   // Track usage
-  const venueUsed = new Map<string, Set<string>>() // "venueId-date-time" -> used
-  const teamDayCount = new Map<string, number>() // "teamId-date" -> count
-  const teamLastEnd = new Map<string, Date>() // teamId -> last match end datetime
+  const venueUsed = new Map<string, Set<string>>()
+  const teamDayCount = new Map<string, number>()
+  const teamLastEnd = new Map<string, Date>()
 
   function venueKey(venueId: string, date: string, time: string) {
     return `${venueId}||${date}||${time}`
@@ -96,14 +119,11 @@ export function scheduleMatches(
     const vKey = venueKey(slot.venueId, slot.date, slot.time)
     if (venueUsed.get(slot.venueId)?.has(vKey)) return false
 
-    // Team time conflict (exact same time)
     for (const teamId of [home_team_id, away_team_id]) {
       const tDayKey = teamDayKey(teamId, slot.date)
       const dayCount = teamDayCount.get(tDayKey) ?? 0
-
       if (dayCount >= maxGamesPerDayPerTeam) return false
 
-      // Check minimum rest
       const lastEnd = teamLastEnd.get(teamId)
       if (lastEnd && differenceInMinutes(matchStart, lastEnd) < minRestMinutes) return false
     }
@@ -118,7 +138,6 @@ export function scheduleMatches(
     const matchStart = parseISO(`${slot.date}T${slot.time}`)
     const matchEnd = addMinutes(matchStart, gameDuration)
 
-    // Mark venue
     if (!venueUsed.has(slot.venueId)) venueUsed.set(slot.venueId, new Set())
     venueUsed.get(slot.venueId)!.add(venueKey(slot.venueId, slot.date, slot.time))
 
@@ -133,7 +152,6 @@ export function scheduleMatches(
     }
   }
 
-  // Sort matches by round (earlier rounds first)
   const sorted = [...matches].sort((a, b) => (a.round ?? 0) - (b.round ?? 0))
 
   const scheduled: GeneratedMatch[] = []
@@ -161,11 +179,8 @@ export function scheduleMatches(
       }
     }
 
-    if (!assigned) {
-      unscheduled.push(match)
-    }
+    if (!assigned) unscheduled.push(match)
   }
 
-  // Append unscheduled at the end without time slots
   return [...scheduled, ...unscheduled]
 }
