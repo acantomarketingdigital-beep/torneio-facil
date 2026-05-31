@@ -73,28 +73,59 @@ const fmtDate = (d: string) => {
 
 // ── Algorithm ──────────────────────────────────────────────────────────────────
 
-function buildMatchups(teams: Team[], format: Format): [Team, Team][] {
-  const pairs: [Team, Team][] = []
+// Berger circle: each round has no team appearing twice → courts fill efficiently
+function bergerRounds(teams: Team[]): [Team, Team][][] {
+  const list: (Team | null)[] =
+    teams.length % 2 === 0 ? [...teams] : [...teams, null]
+  const N = list.length
+  const fixed = list[N - 1]
+  const rot = list.slice(0, N - 1) as (Team | null)[]
+  const rounds: [Team, Team][][] = []
 
+  for (let r = 0; r < N - 1; r++) {
+    const round: [Team, Team][] = []
+    if (fixed && rot[0]) round.push([rot[0] as Team, fixed as Team])
+    for (let i = 1; i < N / 2; i++) {
+      const a = rot[i], b = rot[N - 1 - i]
+      if (a && b) round.push([a as Team, b as Team])
+    }
+    rounds.push(round)
+    rot.unshift(rot.pop()!)
+  }
+  return rounds
+}
+
+function buildMatchups(teams: Team[], format: Format): [Team, Team][] {
   if (format === 'knockout') {
+    const pairs: [Team, Team][] = []
     for (let i = 0; i < teams.length - 1; i += 2)
       if (teams[i + 1]) pairs.push([teams[i], teams[i + 1]])
     return pairs
   }
 
-  const groups = new Map<string, Team[]>()
+  const groupMap = new Map<string, Team[]>()
   for (const t of teams) {
     const key = format === 'groups'
       ? `${t.group || 'U'}|${t.category}|${t.gender}`
       : (t.category || t.gender ? `${t.category}|${t.gender}` : 'all')
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)!.push(t)
+    if (!groupMap.has(key)) groupMap.set(key, [])
+    groupMap.get(key)!.push(t)
   }
 
-  for (const g of groups.values())
-    for (let i = 0; i < g.length; i++)
-      for (let j = i + 1; j < g.length; j++)
-        pairs.push([g[i], g[j]])
+  // Berger rounds per group, then interleave across groups so courts stay busy
+  const allGroupRounds = Array.from(groupMap.values()).map(bergerRounds)
+  const maxR = Math.max(...allGroupRounds.map(r => r.length), 0)
+  const maxG = Math.max(...allGroupRounds.flatMap(r => r.map(rd => rd.length)), 0)
+  const pairs: [Team, Team][] = []
+
+  for (let r = 0; r < maxR; r++) {
+    for (let g = 0; g < maxG; g++) {
+      for (const groupRounds of allGroupRounds) {
+        if (r < groupRounds.length && g < groupRounds[r].length)
+          pairs.push(groupRounds[r][g])
+      }
+    }
+  }
 
   return pairs
 }
@@ -141,7 +172,7 @@ function scheduleDay(
     result.push({ court: bestC + 1, startMin: bestT, home, away })
   }
 
-  return result.sort((a, b) => a.startMin - b.startMin || a.court - b.court)
+  return result.sort((a, b) => a.court - b.court || a.startMin - b.startMin)
 }
 
 function generateSchedule(teams: Team[], config: Config): DateSchedule[] {
@@ -693,6 +724,11 @@ export default function Home() {
                         </tbody>
                       </table>
                     </div>
+                    {s.matches.some(m => m.startMin >= 22 * 60) && (
+                      <div className="mt-2 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg text-xs text-orange-700">
+                        ⚠️ Jogos passando das 22h — adicione mais datas ou quadras para distribuir melhor.
+                      </div>
+                    )}
                     <p className="text-xs text-gray-300 text-center mt-1.5">
                       {s.matches.length} jogo{s.matches.length !== 1 ? 's' : ''}
                     </p>
