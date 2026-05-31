@@ -16,12 +16,12 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { url: '/images/favicon.png', type: 'image/png' },
     ],
     apple: [
-      { url: '/icons/apple-icon-180.png', sizes: '180x180', type: 'image/png' },
+      { url: '/images/logoapp.png', type: 'image/png' },
     ],
+    shortcut: '/images/favicon.png',
   },
   openGraph: {
     title: 'TabelaPro',
@@ -46,13 +46,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="TabelaPro" />
-        <link rel="apple-touch-icon" href="/icons/apple-icon-180.png" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-icon-180.png" />
+        <link rel="apple-touch-icon" href="/images/logoapp.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/images/logoapp.png" />
         {/* Android / general */}
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="application-name" content="TabelaPro" />
-        <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-        <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+        <link rel="icon" type="image/png" href="/images/favicon.png" />
+        <link rel="shortcut icon" href="/images/favicon.png" />
       </head>
       <body className={`${inter.className} min-h-full bg-gray-50 text-gray-900 antialiased`}>
         {children}

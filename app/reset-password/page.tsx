@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 export default function ResetPasswordPage() {
@@ -65,8 +66,7 @@ export default function ResetPasswordPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
-            <span className="text-3xl">🏆</span>
-            <span className="font-bold text-2xl">TabelaPro</span>
+            <Image src="/images/logoprincipal.png" alt="TabelaPro" width={180} height={54} className="max-w-44 w-full h-auto mx-auto" priority />
           </Link>
           <h1 className="text-2xl font-bold mt-6 text-gray-900">Nova senha</h1>
           <p className="text-gray-500 mt-1 text-sm">Escolha uma nova senha para sua conta</p>

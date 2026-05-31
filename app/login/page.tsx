@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginPage() {
@@ -40,9 +41,8 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 text-blue-700">
-            <span className="text-3xl">🏆</span>
-            <span className="font-bold text-2xl">TabelaPro</span>
+          <Link href="/" className="inline-block">
+            <Image src="/images/logoprincipal.png" alt="TabelaPro" width={200} height={60} className="max-w-50 w-full h-auto mx-auto" priority />
           </Link>
           <p className="text-gray-500 mt-3 text-sm">Entre para acessar seus campeonatos</p>
         </div>

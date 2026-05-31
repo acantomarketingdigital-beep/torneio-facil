@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -541,9 +542,8 @@ export default function Home() {
 
       {/* Header */}
       <header className="no-print bg-blue-700 text-white px-4 py-3 flex items-center justify-between shadow">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🏆</span>
-          <span className="font-bold text-xl">TabelaPro</span>
+        <div className="flex items-center">
+          <Image src="/images/logoprincipal.png" alt="TabelaPro" width={130} height={38} className="h-8 w-auto brightness-0 invert" priority />
         </div>
         <div className="flex items-center gap-3">
           {user === undefined ? null : user ? (

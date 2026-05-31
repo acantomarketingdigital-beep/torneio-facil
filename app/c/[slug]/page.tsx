@@ -54,7 +54,7 @@ export default async function PublicChampionshipPage({ params }: { params: Promi
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
         <div className="max-w-4xl mx-auto px-4 py-8">
-          <Link href="/" className="text-blue-200 text-xs hover:text-white mb-4 inline-block">🏆 TorneioFácil</Link>
+          <Link href="/" className="mb-4 inline-block"><img src="/images/logoprincipal.png" alt="TabelaPro" className="h-7 w-auto brightness-0 invert opacity-80 hover:opacity-100" /></Link>
           <h1 className="text-3xl font-bold mb-1">{c.name}</h1>
           <div className="flex flex-wrap items-center gap-3 text-sm text-blue-100 mt-2">
             <span>{c.sport}</span>

@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/server'
 import { FORMAT_LABELS, STATUS_LABELS, STATUS_COLORS, formatDate } from '@/lib/utils'
 import type { Championship } from '@/types'
@@ -51,8 +52,8 @@ export default async function DashboardPage() {
       {/* Navbar */}
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
-          <Link href="/dashboard" className="flex items-center gap-2 font-bold text-blue-600 text-lg">
-            🏆 TorneioFácil
+          <Link href="/dashboard" className="flex items-center">
+            <Image src="/images/logoprincipal.png" alt="TabelaPro" width={130} height={38} className="h-8 w-auto" priority />
           </Link>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600 hidden sm:block">

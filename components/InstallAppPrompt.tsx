@@ -82,7 +82,7 @@ export default function InstallAppPrompt() {
     return (
       <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pb-safe">
         <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 p-4 flex items-center gap-3 max-w-sm mx-auto">
-          <img src="/icons/icon-72.png" alt="TabelaPro" className="w-12 h-12 rounded-xl shrink-0" />
+          <img src="/images/logoapp.png" alt="TabelaPro" className="w-12 h-12 rounded-xl shrink-0 object-contain bg-white" />
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-gray-900 text-sm">Instalar TabelaPro</p>
             <p className="text-xs text-gray-500 mt-0.5">Acesse suas tabelas mais rápido</p>
@@ -113,7 +113,7 @@ export default function InstallAppPrompt() {
         <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 p-5 max-w-sm mx-auto">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-2">
-              <img src="/icons/icon-72.png" alt="TabelaPro" className="w-10 h-10 rounded-xl" />
+              <img src="/images/logoapp.png" alt="TabelaPro" className="w-10 h-10 rounded-xl object-contain bg-white" />
               <p className="font-semibold text-gray-900 text-sm">Instalar no iPhone</p>
             </div>
             <button onClick={dismiss} className="text-gray-300 hover:text-gray-500 text-xl leading-none">×</button>
