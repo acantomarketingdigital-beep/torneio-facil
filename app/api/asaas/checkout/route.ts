@@ -60,6 +60,14 @@ export async function POST(req: Request) {
     await supabase.from('profiles').update({ asaas_customer_id: customerId }).eq('id', user.id)
   }
 
+  // Always sync CPF — customer may be pre-existing (returned by Asaas on duplicate email)
+  // or was created before CPF field was introduced
+  await fetch(`${ASAAS_BASE}/customers/${customerId}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ cpfCnpj }),
+  })
+
   // Create subscription (monthly R$29.90)
   const nextBilling = new Date()
   nextBilling.setDate(nextBilling.getDate() + 1)
