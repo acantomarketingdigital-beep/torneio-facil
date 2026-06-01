@@ -27,24 +27,32 @@ export default async function DashboardPage() {
   const daysLeft = profile?.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(profile.trial_ends_at).getTime() - Date.now()) / 86400000))
     : null
-  const trialExpired = profile?.subscription_status === 'trial' && daysLeft !== null && daysLeft <= 0
+  const isActive = profile?.subscription_status === 'active'
+  // Expirado: status trial E (dias zerados OU trial_ends_at não definido → consideramos expirado)
+  const trialExpired = !isActive && profile?.subscription_status === 'trial' &&
+    (daysLeft !== null ? daysLeft <= 0 : true)
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Trial / subscription banner */}
-      {profile?.subscription_status !== 'active' && daysLeft !== null && (
-        <div className={`px-4 py-2.5 text-sm text-center font-medium ${
-          trialExpired ? 'bg-red-600 text-white' : 'bg-yellow-400 text-yellow-900'
-        }`}>
-          {trialExpired ? (
-            <>Seu período de teste expirou.{' '}
-              <Link href="/plano" className="underline font-bold">Assine agora por R$ 29,90/mês →</Link>
-            </>
-          ) : (
-            <>⏳ Teste grátis: {daysLeft} dia{daysLeft !== 1 ? 's' : ''} restante{daysLeft !== 1 ? 's' : ''}.{' '}
-              <Link href="/plano" className="underline">Ver plano →</Link>
-            </>
-          )}
+      {/* Trial expirado — bloco destacado */}
+      {trialExpired && (
+        <div className="bg-red-600 text-white px-4 py-4 text-center">
+          <p className="font-bold text-base mb-1">⚠️ Seu período de teste expirou</p>
+          <p className="text-red-100 text-sm mb-3">Para continuar usando o TabelaPro, assine o plano mensal.</p>
+          <Link
+            href="/plano"
+            className="inline-block px-6 py-2 bg-white text-red-600 font-bold rounded-xl text-sm hover:bg-red-50 transition-colors"
+          >
+            Assinar agora — R$ 29,90/mês →
+          </Link>
+        </div>
+      )}
+
+      {/* Trial ativo mas acabando */}
+      {!isActive && !trialExpired && daysLeft !== null && (
+        <div className="bg-yellow-400 text-yellow-900 px-4 py-2.5 text-sm text-center font-medium">
+          ⏳ Teste grátis: {daysLeft} dia{daysLeft !== 1 ? 's' : ''} restante{daysLeft !== 1 ? 's' : ''}.{' '}
+          <Link href="/plano" className="underline font-bold">Ver plano →</Link>
         </div>
       )}
 
@@ -54,10 +62,20 @@ export default async function DashboardPage() {
           <Link href="/dashboard" className="flex items-center">
             <img src="/images/logoprincipal.png" alt="TabelaPro" className="h-8 w-auto object-contain" />
           </Link>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <span className="text-sm text-gray-600 hidden sm:block">
               Olá, {profile?.full_name?.split(' ')[0] ?? user.email}
             </span>
+            <Link
+              href="/plano"
+              className={`text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                isActive
+                  ? 'text-green-700 bg-green-50 hover:bg-green-100'
+                  : 'text-blue-700 bg-blue-50 hover:bg-blue-100'
+              }`}
+            >
+              {isActive ? '✓ Plano ativo' : trialExpired ? '⚠️ Assinar' : '⭐ Plano'}
+            </Link>
             <form action="/api/auth/logout" method="post">
               <button type="submit" className="text-sm text-gray-500 hover:text-red-600 transition-colors">
                 Sair
@@ -81,6 +99,23 @@ export default async function DashboardPage() {
             + Novo Campeonato
           </Link>
         </div>
+
+        {/* Trial expirado — CTA principal */}
+        {trialExpired && (
+          <div className="mb-8 bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-6 text-white text-center shadow-lg">
+            <p className="text-lg font-bold mb-1">Desbloqueie o TabelaPro completo</p>
+            <p className="text-blue-100 text-sm mb-4">
+              Geração ilimitada de tabelas · Múltiplas datas · Download PDF · Suporte
+            </p>
+            <Link
+              href="/plano"
+              className="inline-block px-8 py-3 bg-white text-blue-700 font-bold rounded-xl text-base hover:bg-blue-50 transition-colors shadow"
+            >
+              Assinar — R$ 29,90/mês
+            </Link>
+            <p className="text-blue-200 text-xs mt-3">Cancele quando quiser · Pagamento via PIX, cartão ou boleto</p>
+          </div>
+        )}
 
         {/* Empty state */}
         {(!championships || championships.length === 0) && (
