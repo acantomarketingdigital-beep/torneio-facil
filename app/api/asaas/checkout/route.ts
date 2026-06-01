@@ -8,9 +8,15 @@ const ASAAS_BASE = process.env.ASAAS_SANDBOX === 'true'
   ? 'https://sandbox.asaas.com/api/v3'
   : 'https://api.asaas.com/v3'
 
-export async function POST() {
+export async function POST(req: Request) {
   if (!ASAAS_API_KEY) {
     return NextResponse.json({ error: 'Pagamento não configurado ainda.' }, { status: 503 })
+  }
+
+  const body = await req.json().catch(() => ({}))
+  const cpfCnpj: string = (body.cpfCnpj ?? '').replace(/\D/g, '')
+  if (!cpfCnpj || (cpfCnpj.length !== 11 && cpfCnpj.length !== 14)) {
+    return NextResponse.json({ error: 'CPF ou CNPJ inválido.' }, { status: 400 })
   }
 
   const supabase = await createClient()
@@ -42,6 +48,7 @@ export async function POST() {
       body: JSON.stringify({
         name: profile?.full_name || user.email,
         email: user.email,
+        cpfCnpj,
         notificationDisabled: false,
       }),
     })

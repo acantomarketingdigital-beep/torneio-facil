@@ -13,6 +13,7 @@ export default function PlanoPage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [cpfCnpj, setCpfCnpj] = useState('')
   const [user, setUser] = useState<{ email?: string; user_metadata?: { full_name?: string } } | null>(null)
 
   useEffect(() => {
@@ -34,10 +35,19 @@ export default function PlanoPage() {
     : null
 
   async function handleCheckout() {
+    const doc = cpfCnpj.replace(/\D/g, '')
+    if (doc.length !== 11 && doc.length !== 14) {
+      setError('Informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.')
+      return
+    }
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/asaas/checkout', { method: 'POST' })
+      const res = await fetch('/api/asaas/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cpfCnpj: doc }),
+      })
       const data = await res.json()
       if (data.url) {
         window.open(data.url, '_blank')
@@ -114,6 +124,20 @@ export default function PlanoPage() {
               </div>
             ) : (
               <>
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    CPF ou CNPJ <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="000.000.000-00 ou 00.000.000/0001-00"
+                    value={cpfCnpj}
+                    onChange={e => setCpfCnpj(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Necessário para emissão da cobrança.</p>
+                </div>
                 <button
                   onClick={handleCheckout}
                   disabled={loading}
