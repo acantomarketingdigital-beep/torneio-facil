@@ -14,6 +14,7 @@ export default function PlanoPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [cpfCnpj, setCpfCnpj] = useState('')
+  const [cycle, setCycle] = useState<'MONTHLY' | 'YEARLY'>('YEARLY')
   const [user, setUser] = useState<{ email?: string; user_metadata?: { full_name?: string } } | null>(null)
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export default function PlanoPage() {
       const res = await fetch('/api/asaas/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cpfCnpj: doc }),
+        body: JSON.stringify({ cpfCnpj: doc, cycle }),
       })
       const data = await res.json()
       if (data.url) {
@@ -91,12 +92,48 @@ export default function PlanoPage() {
           {/* Header */}
           <div className="bg-blue-700 text-white px-6 py-6 text-center">
             <p className="text-sm text-blue-200 uppercase tracking-wide font-medium">Plano TabelaPro</p>
-            <div className="mt-2 flex items-baseline justify-center gap-1">
-              <span className="text-4xl font-black">R$ 29</span>
-              <span className="text-2xl font-bold">,90</span>
-              <span className="text-blue-200 text-sm">/mês</span>
+
+            {/* Toggle mensal / anual */}
+            <div className="mt-4 inline-flex rounded-xl overflow-hidden border border-blue-500">
+              <button
+                onClick={() => setCycle('MONTHLY')}
+                className={`px-4 py-1.5 text-sm font-semibold transition-colors ${
+                  cycle === 'MONTHLY' ? 'bg-white text-blue-700' : 'text-blue-200 hover:text-white'
+                }`}
+              >
+                Mensal
+              </button>
+              <button
+                onClick={() => setCycle('YEARLY')}
+                className={`px-4 py-1.5 text-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                  cycle === 'YEARLY' ? 'bg-white text-blue-700' : 'text-blue-200 hover:text-white'
+                }`}
+              >
+                Anual
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${
+                  cycle === 'YEARLY' ? 'bg-green-500 text-white' : 'bg-green-400 text-white'
+                }`}>-30%</span>
+              </button>
             </div>
-            <p className="text-blue-200 text-xs mt-1">Cancele quando quiser</p>
+
+            {cycle === 'YEARLY' ? (
+              <>
+                <div className="mt-3 flex items-baseline justify-center gap-1">
+                  <span className="text-4xl font-black">R$ 249</span>
+                  <span className="text-blue-200 text-sm">/ano</span>
+                </div>
+                <p className="text-green-300 text-xs mt-1 font-medium">≈ R$ 20,75/mês · Economize R$ 109,80</p>
+              </>
+            ) : (
+              <>
+                <div className="mt-3 flex items-baseline justify-center gap-1">
+                  <span className="text-4xl font-black">R$ 29</span>
+                  <span className="text-2xl font-bold">,90</span>
+                  <span className="text-blue-200 text-sm">/mês</span>
+                </div>
+                <p className="text-blue-200 text-xs mt-1">Cancele quando quiser</p>
+              </>
+            )}
           </div>
 
           {/* Features */}
@@ -143,7 +180,7 @@ export default function PlanoPage() {
                   disabled={loading}
                   className="w-full py-3.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 text-base"
                 >
-                  {loading ? 'Aguarde...' : 'Assinar agora — R$ 29,90/mês'}
+                  {loading ? 'Aguarde...' : cycle === 'YEARLY' ? 'Assinar agora — R$ 249/ano' : 'Assinar agora — R$ 29,90/mês'}
                 </button>
                 {error && (
                   <p className="text-red-600 text-sm text-center mt-2">{error}</p>

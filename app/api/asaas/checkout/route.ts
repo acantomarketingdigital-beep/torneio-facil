@@ -18,6 +18,8 @@ export async function POST(req: Request) {
   if (!cpfCnpj || (cpfCnpj.length !== 11 && cpfCnpj.length !== 14)) {
     return NextResponse.json({ error: 'CPF ou CNPJ inválido.' }, { status: 400 })
   }
+  const cycle: 'MONTHLY' | 'YEARLY' = body.cycle === 'YEARLY' ? 'YEARLY' : 'MONTHLY'
+  const value = cycle === 'YEARLY' ? 249.00 : 29.90
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -79,9 +81,9 @@ export async function POST(req: Request) {
     body: JSON.stringify({
       customer: customerId,
       billingType: 'UNDEFINED', // allows PIX, credit card, boleto
-      value: 29.90,
+      value,
       nextDueDate: nextBillingStr,
-      cycle: 'MONTHLY',
+      cycle,
       description: 'TabelaPro — Gerador de Tabelas Esportivas',
     }),
   })
