@@ -549,12 +549,16 @@ export default function Home() {
           {user === undefined ? null : user ? (
             <>
               <Link href="/times" className="text-xs text-blue-200 hover:text-white">Times</Link>
-              <Link href="/dashboard" className="text-xs text-blue-200 hover:text-white border border-blue-500 rounded-lg px-3 py-1.5">Dashboard</Link>
+              <Link href="/plano" className="text-xs text-yellow-300 hover:text-white font-semibold">Plano</Link>
+              <Link href="/dashboard" className="text-xs text-white border border-blue-400 rounded-lg px-3 py-1.5 hover:bg-blue-600 transition-colors">Dashboard</Link>
             </>
           ) : (
-            <Link href="/login" className="text-xs text-white border border-blue-400 rounded-lg px-3 py-1.5 hover:bg-blue-600 transition-colors">
-              Entrar
-            </Link>
+            <>
+              <Link href="/plano" className="text-xs text-yellow-300 hover:text-white font-semibold">Plano</Link>
+              <Link href="/login" className="text-xs text-white border border-blue-400 rounded-lg px-3 py-1.5 hover:bg-blue-600 transition-colors">
+                Entrar
+              </Link>
+            </>
           )}
         </div>
       </header>
